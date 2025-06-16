@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name="timstofu"
 version="0.0.1"
-description="SHORT DESC."
+description="Data structure used to represent timsTOF data and clusters alike."
 readme="README.md"
 authors=[
     {name="MatteoLacki",email="matteo.lacki@gmail.com"},

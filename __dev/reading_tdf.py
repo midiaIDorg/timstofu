@@ -32,13 +32,25 @@ from opentimspy import OpenTIMS
 
 folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
 # rm -rf /home/matteo/test.tofu
+
+
 precursor_dataset = LexSortedDataset.from_tdf(
     folder_dot_d="/home/matteo/data_for_midiaID/F9477.d",
     level="precursor",
     output_path="/home/matteo/test.tofu",
 )
+
+
+x = LexSortedDataset.from_tofu("/home/matteo/test.tofu")
+
+
+# shape is not properly save, not saved at all as a matter of fuck.
+# fix it .
+
 # ls /home/matteo/test.tofu
 
+
+LexSortedDataset.from_tofu("/home/matteo/test.tofu")
 
 output_path = Path("/home/matteo/test.mmappet")
 

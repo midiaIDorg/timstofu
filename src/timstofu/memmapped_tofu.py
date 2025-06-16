@@ -30,6 +30,7 @@ def get_memmapped_dotdict(
     folder = Path(folder)
     dtypes = []
     arrays = {}
+    shapes = {}
     for name, (dtype, shape) in column_to_type_and_shape.items():
         dtypes.append((name, dtype))
         arrays[name] = np.memmap(
@@ -39,8 +40,12 @@ def get_memmapped_dotdict(
             dtype=dtype,
             **other_np_memmap_kwargs,
         )
+        shapes[name] = (
+            tuple(map(int, shape)) if isinstance(shape, tuple) else int(shape)
+        )
+    scheme = {col: (type_str, shapes[col]) for col, type_str in np.dtype(dtypes).descr}
     with open(folder / "scheme.json", "w") as f:
-        json.dump(np.dtype(dtypes).descr, f)
+        json.dump(scheme, f)
     return DotDict(arrays)
 
 
@@ -52,16 +57,17 @@ def open_memmapped_data(
     """Read existing memmapped arrays in a folder."""
     folder = Path(folder)
     with open(folder / "scheme.json", "r") as f:
-        dtypes = json.load(f)
+        scheme = json.load(f)
     return DotDict(
         {
             name: np.memmap(
                 folder / f"{name}.npy",
                 mode=mode,
                 dtype=np.dtype(type_str),
+                shape=shape,
                 **other_np_memmap_kwargs,
             )
-            for name, type_str in dtypes
+            for name, (type_str, shape) in scheme.items()
         }
     )
 

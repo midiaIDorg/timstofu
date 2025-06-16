@@ -18,6 +18,7 @@ from timstofu.sort_and_pepper import sort_events_lexicographically_per_frame_sca
 from timstofu.sort_and_pepper import sorted_in_frame_scan_groups
 
 from timstofu.memmapped_tofu import MemmappedArrays
+from timstofu.memmapped_tofu import open_memmapped_data
 
 from timstofu.stats import count2D
 from timstofu.stats import get_precumsums
@@ -150,15 +151,8 @@ class CompactDataset:
 
     @classmethod
     def from_tofu(cls, folder: str | Path, mode="r", **kwargs):
-        folder = Path(folder)
-        counts = np.memmap(folder / "counts.npy", mode="r", **kwargs)
-        columns = DotDict(
-            {
-                path.stem: np.memmap(path, mode=mode, **kwargs)
-                for path in folder.glob("*.npy")
-                if path.stem != "counts"
-            }
-        )
+        columns = open_memmapped_data(folder)
+        counts = columns.pop("counts")
         return cls(index=get_precumsums(counts), counts=counts, columns=columns)
 
 
@@ -329,6 +323,7 @@ class LexSortedDataset(CompactDataset):
         ),
         tqdm_kwargs: dict[str, Any] = {},
         force: bool = False,
+        mode: str = "r",
     ):
         """Create an instance of LexSortedDataset from a timsTOF .d folder.
 
@@ -355,6 +350,11 @@ class LexSortedDataset(CompactDataset):
             case "both":
                 frames = raw_data.frames["Id"]
 
+        if "desc" not in tqdm_kwargs:
+            tqdm_kwargs["desc"] = "Counting (frame,scan) pairs among events"
+        if "total" not in tqdm_kwargs:
+            tqdm_kwargs["total"] = len(frames)
+
         if output_path is None:
             frame_scan_to_count = np.zeros(
                 dtype=np.uint32,
@@ -366,57 +366,42 @@ class LexSortedDataset(CompactDataset):
                     columns=list(satelite_data_dtypes),
                 )
             )
-            if "desc" not in tqdm_kwargs:
-                tqdm_kwargs["desc"] = "Counting (frame,scan) pairs among events"
             for frame in tqdm(frames, **tqdm_kwargs):
                 frame_data = raw_data.query(frame, columns="scan")
                 unique_scans, counts = np.unique(frame_data["scan"], return_counts=True)
                 frame_scan_to_count[frame, unique_scans] = counts
-        else:
-            size = np.sum(raw_data.frames["NumPeaks"][frames - 1])
-            with MemmappedArrays(
-                folder = output_path,
-                column_to_type_and_shape = dict(
-                    count=(np.uint32, (raw_data.max_frame + 1, raw_data.max_scan + 1)),
-                    tof=(np.uint32, size),
-                    intensity=(np.uint32, size),        
-                ),
-                mode="w+"
-            ) as mm:
-            frame_scan_to_count = np.memmap(
-                output_path / "counts.npy",
-                dtype=np.uint32,
-                shape=(raw_data.max_frame + 1, raw_data.max_scan + 1),
-                mode="w+",
-            )
-            columns = DotDict(
-                raw_data.query(
-                    frames,
-                    columns={
-                        col: np.memmap(
-                            output_path / f"{col}.npy",
-                            dtype=dtype,
-                            shape=size,
-                            mode="w+",
-                        )
-                        for col, dtype in satelite_data_dtypes.items()
-                    },
-                )
-            )
-            for values in columns.values():
-                values.flush()  # not perfect at all, should be a context manager...
 
-            if "desc" not in tqdm_kwargs:
-                tqdm_kwargs["desc"] = "Counting (frame,scan) pairs among events"
+            return cls(
+                index=get_precumsums(frame_scan_to_count),
+                counts=frame_scan_to_count,
+                columns=columns,
+            )
+
+        size = np.sum(raw_data.frames["NumPeaks"][frames - 1])
+        with MemmappedArrays(
+            folder=output_path,
+            column_to_type_and_shape=dict(
+                counts=(np.uint32, (raw_data.max_frame + 1, raw_data.max_scan + 1)),
+                tof=(np.uint32, size),
+                intensity=(np.uint32, size),
+            ),
+            mode="w+",
+        ) as mm:
+            raw_data.query(
+                frames,
+                columns=dict(tof=mm.tof, intensity=mm.intensity),
+            )
             for frame in tqdm(frames, **tqdm_kwargs):
                 frame_data = raw_data.query(frame, columns="scan")
                 unique_scans, counts = np.unique(frame_data["scan"], return_counts=True)
-                frame_scan_to_count[frame, unique_scans] = counts
+                mm.counts[frame, unique_scans] = counts
+
+        res = open_memmapped_data(output_path, mode=mode)
 
         return cls(
-            index=get_precumsums(frame_scan_to_count),
-            counts=frame_scan_to_count,
-            columns=columns,
+            index=get_precumsums(res.counts),
+            counts=res.counts,
+            columns=DotDict(tof=res.tof, intensity=res.intensity),
         )
 
     def to_tdf(self, path: str):
