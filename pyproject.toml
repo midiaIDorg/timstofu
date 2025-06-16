@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools >= 64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name="timstofu"
+version="0.0.1"
+description="SHORT DESC."
+readme="README.md"
+authors=[
+    {name="MatteoLacki",email="matteo.lacki@gmail.com"},
+]
+dependencies = [
+    "numpy",
+    "numba",
+    "numba_progress",
+    "pandas",# making that optional would be great.
+    "opentimspy @git+https://github.com/michalsta/opentims.git",
+    "dictodot @git+https://github.com/MatteoLacki/dictodot.git",
+    "mmapped_df @git+https://github.com/michalsta/mmapped_df.git",
+    "tqdm",
+]
+requires-python = ">=3.6"
+
+[project.optional-dependencies]
+dev = [
+    "twine",
+    "pytest",
+    "ipython",
+    "matplotlib",
+]
+
+
+[project.scripts]
+example_shell_script = "timstofu.cli.example_shell_script:example_shell_script"
+
+[project.urls]
+homepage="https://github.com/MatteoLacki/timstofu.git"
+repository="https://github.com/MatteoLacki/timstofu.git"
+
+[tool.uv]
+reinstall-package = ["timstofu"]
+
+# [tool.pytest.ini_options]
+# testpaths = ["tests"]
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+timstofu = ["data/*.csv"]
