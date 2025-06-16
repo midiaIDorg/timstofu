@@ -31,17 +31,40 @@ from opentimspy import OpenTIMS
 
 
 folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
+folder_dot_d = "/home/matteo/data_for_midiaID/O11556.d"
+
 # rm -rf /home/matteo/test.tofu
-
-
+# rm -rf /home/matteo/O11556.tofu
+%%time
 precursor_dataset = LexSortedDataset.from_tdf(
-    folder_dot_d="/home/matteo/data_for_midiaID/F9477.d",
+    folder_dot_d=folder_dot_d,
     level="precursor",
-    output_path="/home/matteo/test.tofu",
+    output_path="/home/matteo/O11556.tofu",
+)
+
+# rm -rf /home/matteo/O11556_with_mz.tofu
+%%time
+precursor_dataset = LexSortedDataset.from_tdf(
+    folder_dot_d=folder_dot_d,
+    level="precursor",
+    output_path="/home/matteo/O11556_with_mz.tofu",
+    satelite_data_dtypes = dict(
+        tof=np.uint32,
+        intensity=np.uint32,
+        mz=np.float64,
+    ),
 )
 
 
-x = LexSortedDataset.from_tofu("/home/matteo/test.tofu")
+precursor_dataset
+# why precursor_dataset.columns.mz == 0?
+
+"mz": ["<f4", 371439835],
+np.memmap("/home/matteo/O11556_with_mz.tofu/mz.npy", mode="r", dtype="<f4")
+# perhaps OpenTIMSpy did not output it.
+
+x = LexSortedDataset.from_tofu("/home/matteo/O11556_with_mz.tofu")
+# stupid m/z does not work.
 
 
 # shape is not properly save, not saved at all as a matter of fuck.

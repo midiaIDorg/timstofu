@@ -378,31 +378,25 @@ class LexSortedDataset(CompactDataset):
             )
 
         size = np.sum(raw_data.frames["NumPeaks"][frames - 1])
+
+        scheme = {col: (dtype, size) for col, dtype in satelite_data_dtypes.items()}
+        scheme["counts"] = (np.uint32, (raw_data.max_frame + 1, raw_data.max_scan + 1))
+
         with MemmappedArrays(
             folder=output_path,
-            column_to_type_and_shape=dict(
-                counts=(np.uint32, (raw_data.max_frame + 1, raw_data.max_scan + 1)),
-                tof=(np.uint32, size),
-                intensity=(np.uint32, size),
-            ),
+            column_to_type_and_shape=scheme,
             mode="w+",
         ) as mm:
             raw_data.query(
                 frames,
-                columns=dict(tof=mm.tof, intensity=mm.intensity),
+                columns={col: arr for col, arr in mm.items() if col != "counts"},
             )
             for frame in tqdm(frames, **tqdm_kwargs):
                 frame_data = raw_data.query(frame, columns="scan")
                 unique_scans, counts = np.unique(frame_data["scan"], return_counts=True)
                 mm.counts[frame, unique_scans] = counts
 
-        res = open_memmapped_data(output_path, mode=mode)
-
-        return cls(
-            index=get_precumsums(res.counts),
-            counts=res.counts,
-            columns=DotDict(tof=res.tof, intensity=res.intensity),
-        )
+        return cls.from_tofu(output_path)
 
     def to_tdf(self, path: str):
         raise NotImplementedError
