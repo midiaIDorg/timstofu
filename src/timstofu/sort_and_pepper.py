@@ -9,6 +9,7 @@ from numba_progress import ProgressBar
 from timstofu.numba_helper import inputs_series_to_numpy
 from timstofu.stats import _count_unique
 from timstofu.stats import count2D
+from timstofu.stats import count_unique_for_indexed_data
 from timstofu.stats import cumsum
 from timstofu.stats import get_precumsums
 
@@ -80,16 +81,6 @@ def test_is_lex_strictly_increasing():
 
 
 is_lex_strictly_increasing = inputs_series_to_numpy(_is_lex_strictly_increasing)
-
-
-@numba.njit(cache=True)
-def empty_copy(xx):
-    return np.empty(dtype=xx.dtype, shape=xx.shape)
-
-
-@numba.njit(cache=True)
-def zeros_copy(xx):
-    return np.zeros(dtype=xx.dtype, shape=xx.shape)
 
 
 @numba.njit(boundscheck=True, cache=True)
@@ -371,7 +362,8 @@ def argcountsort3D(
     xx: npt.NDArray | pd.Series,
     yy: npt.NDArray | pd.Series,
     zz: npt.NDArray | pd.Series,
-):
+    return_counts: bool = False,
+) -> npt.NDArray | tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
     """Get the order sorting any array as long as the provided integer arrays lexicographically by xx, yy, and zz.
 
     Parameters
@@ -379,10 +371,11 @@ def argcountsort3D(
     xx (np.array): A 1D array.
     yy (np.array): A 1D array.
     zz (np.array): A 1D array.
+    return_counts (bool): Return also xy2count.
 
     Returns
     ```````
-    np.array of uints: the reindexing needed to establish the lexicogrpahical order.
+    np.array|tuple[np.array,np.array,np.array]: the reindexing needed to establish the lexicogrpahical order or that and counts and index arrays.
 
     Notes
     -----
@@ -403,4 +396,29 @@ def argcountsort3D(
         xy_order,
         False,
     )
+    if return_counts:
+        return xyz_order, xy2count, xy2first_idx
     return xyz_order
+
+
+def test_count_unique_for_indexed_data():
+    xx = np.array([1, 1, 1, 1, 2, 2, 2])
+    yy = np.array([2, 1, 2, 1, 1, 2, 1])
+    zz = np.array([2, 1, 2, 2, 1, 2, 1])
+
+    order, xy2count, xy2first_idx = argcountsort3D(xx, yy, zz, return_counts=True)
+    assert is_lex_nondecreasing(xx[order], yy[order], zz[order])
+
+    mega_cast = lambda type: lambda xx: tuple(map(type, xx))
+    res = set(
+        map(
+            mega_cast(int),
+            zip(
+                *count_unique_for_indexed_data(
+                    zz[order], xy2count, xy2first_idx
+                ).nonzero()
+            ),
+        )
+    )
+    expected_res = set(map(mega_cast(int), zip(xx, yy)))
+    assert res == expected_res

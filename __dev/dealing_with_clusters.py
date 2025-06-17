@@ -11,6 +11,7 @@ import shutil
 
 from timstofu.sort_and_pepper import lexargcountsort2D
 from timstofu.sort_and_pepper import lexargcountsort2D_to_3D
+from timstofu.stats import count_unique_for_indexed_data
 from timstofu.tofu import LexSortedClusters
 
 
@@ -19,15 +20,175 @@ clusters_path = "/home/matteo/tmp/test1.mmappet"  # real fragment clusters
 
 output_folder: str | Path | None = "/tmp/test_blah.tofu"
 shutil.rmtree(output_folder)
-sorted_clusters_on_drive = LexSortedClusters.from_df(
+sorted_clusters_on_drive, lex_order = LexSortedClusters.from_df(
     df=open_dataset_dct(clusters_path),
     output_folder=output_folder
 )
-sorted_clusters_in_ram = LexSortedClusters.from_df(
+sorted_clusters_in_ram, lex_order = LexSortedClusters.from_df(
     df=open_dataset_dct(clusters_path)
 )
+# write some test for it all.
+
+
 
 sorted_clusters_in_ram == sorted_clusters_on_drive
+
+######################################################################
+import numba
+import numpy as np
+import numpy.typing as npt
+
+from math import inf
+from numba_progress import ProgressBar
+from timstofu.tofu import LexSortedClusters
+
+
+sorted_clusters = LexSortedClusters.from_tofu("/tmp/test_blah.tofu")
+# sorted_clusters.deduplicate()
+
+
+unique_counts = sorted_clusters.count_unique_frame_scan_tof_tuples()
+deduplicated_event_count = unique_counts.sum()
+sorted_tofs = sorted_clusters.columns.tof
+sorted_intensities = sorted_clusters.columns.intensity
+nondeduplicated_counts = sorted_clusters.counts[sorted_clusters.counts>0]
+
+
+import numpy as np
+
+from timstofu.sort_and_pepper import argcountsort3D
+from timstofu.sort_and_pepper import is_lex_nondecreasing
+from timstofu.sort_and_pepper import test_count_unique_for_indexed_data
+from timstofu.stats import _count_unique
+from timstofu.stats import count_unique_for_indexed_data
+from timstofu.stats import zeros_copy
+
+xx = np.array([1, 1, 1, 1, 2, 2, 2])
+yy = np.array([2, 1, 2, 1, 1, 2, 1])
+zz = np.array([2, 1, 2, 2, 1, 2, 1])
+
+order, xy2count, xy2first_idx = argcountsort3D(xx, yy, zz, return_counts=True)
+assert is_lex_nondecreasing(xx[order], yy[order], zz[order])
+
+count_unique_for_indexed_data(
+    zz[order], xy2count, xy2first_idx
+).nonzero()
+
+test_count_unique_for_indexed_data()
+
+
+
+
+@numba.njit(boundscheck=True)
+def deduplicate(
+    sorted_tofs: npt.NDArray,
+    sorted_intensities: npt.NDArray,
+    nondeduplicated_counts: npt.NDArray,
+    deduplicated_event_count: int,
+    progress_proxy: ProgressBar | None = None,
+):
+    dedup_tofs = np.empty(
+        dtype=sorted_tofs.dtype,
+        shape=deduplicated_event_count,
+    )
+    dedup_intensities = np.zeros(
+        dtype=sorted_intensities.dtype,
+        shape=deduplicated_event_count,
+    )
+
+    counts_idx = 0
+    current_group_count = 0
+    dedup_idx = -1
+    prev_tof = -inf
+
+
+    for i, (tof, intensity) in enumerate(zip(sorted_tofs, sorted_intensities)):
+        # if dedup_idx == 83185278:
+        #     return dedup_idx, i, tof, prev_tof, intensity, counts_idx, current_group_count, dedup_tofs, dedup_intensities
+
+        if current_group_count == nondeduplicated_counts[counts_idx]:
+            counts_idx += 1
+            current_group_count = 0
+            prev_tof = -inf  # force top > prev_tof
+
+        if tof > prev_tof:
+            dedup_idx += 1
+            # dedup_tofs[dedup_idx] = tof
+
+        # dedup_intensities[dedup_idx] += intensity
+        prev_tof = tof
+        current_group_count += 1
+        if progress_proxy is not None:
+            progress_proxy.update(1)
+
+    # assert dedup_idx == deduplicated_event_count - 1
+    # assert counts_idx == len(nondeduplicated_counts) - 1
+    return dedup_idx, i, tof, prev_tof, intensity, counts_idx, current_group_count, dedup_tofs, dedup_intensities
+    # return dedup_tofs, dedup_intensities
+
+with ProgressBar(total=sorted_clusters.counts.sum()) as progress_proxy:
+    dedup_idx, i, tof, prev_tof, intensity, counts_idx, current_group_count, dedup_tofs, dedup_intensities = deduplicate(
+        sorted_tofs = sorted_clusters.columns.tof,
+        sorted_intensities = sorted_clusters.columns.intensity,
+        nondeduplicated_counts = sorted_clusters.counts[sorted_clusters.counts>0],
+        deduplicated_event_count = unique_counts.sum(),
+        progress_proxy=progress_proxy
+    )
+dedup_idx
+len(dedup_intensities)
+len(sorted_tofs) == sorted_clusters.counts.sum()
+
+unique_counts.sum()
+
+
+from dictodot import DotDict
+from timstofu.sort_and_pepper import is_lex_nondecreasing
+
+dd = DotDict(open_dataset_dct(clusters_path))
+assert is_lex_nondecreasing(
+    dd.frame[lex_order], dd.scan[lex_order], dd.tof[lex_order]
+), "We did not get a lexicographically sorted data."
+
+
+
+
+
+
+dedup_tofs = np.empty(
+    dtype=sorted_tofs.dtype,
+    shape=deduplicated_event_count,
+)
+dedup_intensities = np.zeros(
+    dtype=sorted_intensities.dtype,
+    shape=deduplicated_event_count,
+)
+
+counts_idx = 0
+current_group_count = 0
+dedup_idx = -1
+prev_tof = -inf
+
+# i, (tof,intensity) = next(enumerate(zip(sorted_tofs, sorted_intensities)))
+for i, (tof, intensity) in enumerate(zip(sorted_tofs, sorted_intensities)):
+    if current_group_count == nondeduplicated_counts[counts_idx]:
+        counts_idx += 1
+        current_group_count = 0
+        prev_tof = -inf  # force top > prev_tof
+
+    if tof > prev_tof:
+        dedup_idx += 1
+        dedup_tofs[dedup_idx] = tof
+
+    dedup_intensities[dedup_idx] += intensity
+    prev_tof = tof
+    current_group_count += 1
+    if progress_proxy is not None:
+        progress_proxy.update(1)
+
+assert dedup_idx == deduplicated_event_count - 1
+assert counts_idx == len(nondeduplicated_counts) - 1
+
+
 
 import numpy as np
 

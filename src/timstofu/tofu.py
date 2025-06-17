@@ -27,6 +27,7 @@ from timstofu.memmapped_tofu import MemmappedArrays
 from timstofu.memmapped_tofu import open_memmapped_data
 
 from timstofu.stats import count2D
+from timstofu.stats import count_unique_for_indexed_data
 from timstofu.stats import get_precumsums
 
 import numba
@@ -182,41 +183,32 @@ class CompactDataset:
 
 
 # I just direclty need that function.
-
-# TODO: need to reimplement
-# * presort_tofs_and_intensities_per_frame_scan
-# * sort_events_lexicographically_per_frame_scan_tof
-# to allow for variable number of columns.
 # THEN: I can sort both clusters and datasets.
 # The latter I need for adding noise on top of a dataset.
 
 
 @dataclass(eq=False)
 class LexSortedClusters(CompactDataset):
-    frame_scan_to_unique_tofs_count: npt.NDArray | None = (
-        None  # this not at all elegant. more like an elephant.
-    )
-
     @classmethod
     def from_df(
         cls,
-        df: pd.DataFrame,
+        df: pd.DataFrame | dict[str, npt.NDArray],
         output_folder: str | Path | None = None,
         paranoid: bool = False,
         force: bool = False,
-    ) -> CompactDataset:
+    ) -> tuple[CompactDataset, npt.NDArray]:
         """
         Arguments:
             df (pd.DataFrame): Opened data frame with ClusterID column.
             presort (bool): Presort clusters in (frame,scan) but not tof.
             paranoid (bool): Do checks that inidicate a need to visit a psychiastrist and fast.
         """
+        for col in ("frame", "scan", "tof", "intensity", "ClusterID"):
+            assert col in df
+
         dd = DotDict(
             df if isinstance(df, dict) else {c: df[c].to_numpy(copy=False) for c in df}
         )
-        for col in ("frame", "scan", "tof", "intensity", "ClusterID"):
-            assert col in dd
-
         satellite_columns = set(dd) - set(["frame", "scan"])
 
         frame_scan_to_count, *_ = count2D(dd.frame, dd.scan)
@@ -229,11 +221,13 @@ class LexSortedClusters(CompactDataset):
             ), "We did not get a lexicographically sorted data."
 
         if output_folder is None:
-            return LexSortedClusters(
-                index=frame_scan_to_first_idx,
-                counts=frame_scan_to_count,
-                columns=DotDict({c: dd[c][lex_order] for c in satellite_columns}),
-                frame_scan_to_unique_tofs_count=None,
+            return (
+                LexSortedClusters(
+                    index=frame_scan_to_first_idx,
+                    counts=frame_scan_to_count,
+                    columns=DotDict({c: dd[c][lex_order] for c in satellite_columns}),
+                ),
+                lex_order,
             )
 
         output_folder = Path(output_folder)
@@ -251,15 +245,26 @@ class LexSortedClusters(CompactDataset):
             for c in satellite_columns:
                 write_orderly(in_arr=dd[c], out_arr=context[c], order=lex_order)
                 columns[c] = context[c]
-            return LexSortedClusters(
-                index=frame_scan_to_first_idx,
-                counts=context["counts"],
-                columns=columns,
-                frame_scan_to_unique_tofs_count=None,
+            return (
+                LexSortedClusters(
+                    index=frame_scan_to_first_idx,
+                    counts=context["counts"],
+                    columns=columns,
+                ),
+                lex_order,
             )
 
+    def count_unique_frame_scan_tof_tuples(self):
+        unique_counts = count_unique_for_indexed_data(
+            self.columns.tof, self.counts, self.index
+        )
+        assert np.all(
+            unique_counts <= self.counts
+        ), "The number of unique counts is sometimes higher than non-unique counts of (frame,scan,tof) tuples. ABOMINATION!"
+        return unique_counts
+
     def deduplicate(self) -> LexSortedDataset:
-        assert self.frame_scan_to_unique_tofs_count is not None
+        unique_counts = self.count_unique_frame_scan_tof_tuples()
         with ProgressBar(
             total=len(self),
             desc="Deduplicating (tof,intensity) pairs per (frame,scan)",
@@ -268,13 +273,12 @@ class LexSortedClusters(CompactDataset):
                 self.columns.tof,
                 self.columns.intensity,
                 self.counts[self.counts > 0],
-                self.frame_scan_to_unique_tofs_count.sum(),
+                unique_counts.sum(),
                 progress_proxy,
             )
-
         return self.__class__(
-            index=get_precumsums(self.frame_scan_to_unique_tofs_count),
-            counts=self.frame_scan_to_unique_tofs_count,
+            index=get_precumsums(unique_counts),
+            counts=unique_counts,
             columns=DotDict(
                 tof=dedup_tofs,
                 intensity=dedup_intensities,

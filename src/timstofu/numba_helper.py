@@ -164,3 +164,13 @@ def write_orderly(in_arr, out_arr, order) -> None:
     assert len(in_arr) == len(order)
     for i in range(len(in_arr)):
         out_arr[i] = in_arr[order[i]]
+
+
+@numba.njit(cache=True)
+def empty_copy(xx):
+    return np.empty(dtype=xx.dtype, shape=xx.shape)
+
+
+@numba.njit(cache=True)
+def zeros_copy(xx):
+    return np.zeros(dtype=xx.dtype, shape=xx.shape)

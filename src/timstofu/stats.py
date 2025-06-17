@@ -5,7 +5,10 @@ import numba
 import numpy as np
 import numpy.typing as npt
 
+from numba_progress import ProgressBar
+
 from timstofu.numba_helper import inputs_series_to_numpy
+from timstofu.numba_helper import zeros_copy
 
 
 # optimization: tabulate erf differences.
@@ -171,3 +174,21 @@ def _count_unique(sorted_xx: npt.NDArray) -> int:
 
 
 count_unique = functools.wraps(_count_unique)(inputs_series_to_numpy(_count_unique))
+
+
+@numba.njit(boundscheck=True)
+def count_unique_for_indexed_data(
+    zz_lexsorted: npt.NDArray,
+    counts: npt.NDArray,
+    index: npt.NDArray,
+    progress_proxy: ProgressBar | None = None,
+) -> npt.NDArray:
+    """Count the number of unique (x,y,z) tuples in a sorted order with counts and index."""
+    unique_counts = zeros_copy(counts)
+    for x, y in zip(*counts.nonzero()):
+        first_idx = index[x, y]
+        last_idx = first_idx + counts[x, y]
+        unique_counts[x, y] = _count_unique(zz_lexsorted[first_idx:last_idx])
+        if progress_proxy is not None:
+            progress_proxy.update(1)
+    return unique_counts
