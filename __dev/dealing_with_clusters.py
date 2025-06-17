@@ -4,14 +4,12 @@
 """
 import numba
 import numpy as np
-import numpy as np
 import numpy.typing as npt
 import shutil
 
 from math import inf
 from mmapped_df import open_dataset
 from mmapped_df import open_dataset_dct
-from numba_progress import ProgressBar
 from numba_progress import ProgressBar
 from pathlib import Path
 from timstofu.sort_and_pepper import argcountsort3D
@@ -21,10 +19,9 @@ from timstofu.sort_and_pepper import lexargcountsort2D_to_3D
 from timstofu.sort_and_pepper import test_count_unique_for_indexed_data
 from timstofu.stats import _count_unique
 from timstofu.stats import count_unique_for_indexed_data
-from timstofu.stats import count_unique_for_indexed_data
 from timstofu.stats import zeros_copy
 from timstofu.tofu import LexSortedClusters
-from timstofu.tofu import LexSortedClusters
+from timstofu.tofu import LexSortedDataset
 
 
 clusters_path = "/home/matteo/Projects/midia/midia_experiments/pipelines/devel/midia_pipe/tmp/clusters/tims/reformated/441/clusters.startrek"  # real fragment clusters
@@ -42,6 +39,20 @@ sorted_clusters_in_ram, lex_order = LexSortedClusters.from_df(
 # write some test for it all.
 
 
+# OK, now what? The addiition of CompactDatasets
+folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d" # small data
+precursor_dataset = LexSortedDataset.from_tdf(
+    folder_dot_d=folder_dot_d,
+    level="precursor",
+)
+fragment_dataset = LexSortedDataset.from_tdf(
+    folder_dot_d=folder_dot_d,
+    level="fragment",
+)
+
+precursor_dataset + fragment_dataset
+# combine_datasets: does not allow for memmapped arrays at all.
+
 
 
 
@@ -54,7 +65,7 @@ sorted_clusters_in_ram == sorted_clusters_on_drive
 
 
 sorted_clusters = LexSortedClusters.from_tofu("/tmp/test_blah.tofu")
-deduplicated_clusters = sorted_clusters.deduplicate()
+deduplicated_clusters = sorted_clusters.deduplicate() # TODO: missing memmapped equivalent.
 
 deduplicated_clusters.columns
 

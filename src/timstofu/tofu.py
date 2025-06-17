@@ -46,7 +46,9 @@ def combine_datasets(
     assert self_index.dtype == other_index.dtype
     assert self_counts.dtype == other_counts.dtype
 
-    counts = add_matrices_with_potentially_different_shapes(self_counts, other_counts)
+    counts = add_matrices_with_potentially_different_shapes(
+        self_counts, other_counts
+    )  # this supports multiple counts.
     index = get_precumsums(counts)
 
     s_cols, o_cols = split_args_into_K(2, *self_and_other_columns)
@@ -257,6 +259,7 @@ class LexSortedClusters(CompactDataset):
         ), "The number of unique counts is sometimes higher than non-unique counts of (frame,scan,tof) tuples. ABOMINATION!"
         return unique_counts
 
+    # TODO: must also be able to produce memory mapped files.
     def deduplicate(self) -> LexSortedDataset:
         unique_counts = self.count_unique_frame_scan_tof_tuples()
         with ProgressBar(
@@ -337,8 +340,6 @@ class LexSortedDataset(CompactDataset):
             if isinstance(folder_dot_d, OpenTIMS)
             else OpenTIMS(folder_dot_d)
         )
-        output_path = Path(output_path)
-        output_path.mkdir(parents=True, exist_ok=force)
         match level:
             case "precursor":
                 frames = raw_data.ms1_frames
@@ -360,15 +361,15 @@ class LexSortedDataset(CompactDataset):
                     columns=list(satelite_data_dtypes),
                 )
             )
-            frame_scan_to_count = raw_data.count_frame_scan_occurrences(
-                frames=frames_it, counts=mm.counts
-            )
+            frame_scan_to_count = raw_data.count_frame_scan_occurrences(frames_it)
             return cls(
                 index=get_precumsums(frame_scan_to_count),
                 counts=frame_scan_to_count,
                 columns=columns,
             )
         else:
+            output_path = Path(output_path)
+            output_path.mkdir(parents=True, exist_ok=force)
             size = np.sum(raw_data.frames["NumPeaks"][frames - 1])
             scheme = {col: (dtype, size) for col, dtype in satelite_data_dtypes.items()}
             scheme["counts"] = (
