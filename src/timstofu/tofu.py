@@ -30,6 +30,7 @@ import pandas as pd
 
 
 # TODO: generalize to collections of arrays: will be simpler.
+# This should be simpler if we have the order already.
 @numba.njit
 def combine_datasets(
     self_counts: npt.NDArray,

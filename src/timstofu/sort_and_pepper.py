@@ -316,6 +316,7 @@ def lexargcountsort2D_to_3D(
     return xy_to_xyz_order
 
 
+# OBSOLETE
 @numba.njit(boundscheck=True)
 def frame_scan_tof_argsort(
     frame_scan_to_first_idx: npt.NDArray,
@@ -371,6 +372,22 @@ def argcountsort3D(
     yy: npt.NDArray | pd.Series,
     zz: npt.NDArray | pd.Series,
 ):
+    """Get the order sorting any array as long as the provided integer arrays lexicographically by xx, yy, and zz.
+
+    Parameters
+    ----------
+    xx (np.array): A 1D array.
+    yy (np.array): A 1D array.
+    zz (np.array): A 1D array.
+
+    Returns
+    ```````
+    np.array of uints: the reindexing needed to establish the lexicogrpahical order.
+
+    Notes
+    -----
+    If order is the results, then tuples zip(xx[order], yy[order], zz[order]) will be lexicographically sorted (nondecreasing).
+    """
     xy2count, *_ = count2D(xx, yy)
     xy2first_idx = get_precumsums(xy2count)
     xy_order = lexargcountsort2D(
