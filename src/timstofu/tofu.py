@@ -354,49 +354,43 @@ class LexSortedDataset(CompactDataset):
             tqdm_kwargs["desc"] = "Counting (frame,scan) pairs among events"
         if "total" not in tqdm_kwargs:
             tqdm_kwargs["total"] = len(frames)
+        frames_it = tqdm(frames, **tqdm_kwargs)
 
         if output_path is None:
-            frame_scan_to_count = np.zeros(
-                dtype=np.uint32,
-                shape=(raw_data.max_frame + 1, raw_data.max_scan + 1),
-            )
             columns = DotDict(
                 raw_data.query(
                     frames,
                     columns=list(satelite_data_dtypes),
                 )
             )
-            for frame in tqdm(frames, **tqdm_kwargs):
-                frame_data = raw_data.query(frame, columns="scan")
-                unique_scans, counts = np.unique(frame_data["scan"], return_counts=True)
-                frame_scan_to_count[frame, unique_scans] = counts
-
+            frame_scan_to_count = raw_data.count_frame_scan_occurrences(
+                frames=frames_it, counts=mm.counts
+            )
             return cls(
                 index=get_precumsums(frame_scan_to_count),
                 counts=frame_scan_to_count,
                 columns=columns,
             )
-
-        size = np.sum(raw_data.frames["NumPeaks"][frames - 1])
-
-        scheme = {col: (dtype, size) for col, dtype in satelite_data_dtypes.items()}
-        scheme["counts"] = (np.uint32, (raw_data.max_frame + 1, raw_data.max_scan + 1))
-
-        with MemmappedArrays(
-            folder=output_path,
-            column_to_type_and_shape=scheme,
-            mode="w+",
-        ) as mm:
-            raw_data.query(
-                frames,
-                columns={col: arr for col, arr in mm.items() if col != "counts"},
+        else:
+            size = np.sum(raw_data.frames["NumPeaks"][frames - 1])
+            scheme = {col: (dtype, size) for col, dtype in satelite_data_dtypes.items()}
+            scheme["counts"] = (
+                np.uint32,
+                (raw_data.max_frame + 1, raw_data.max_scan + 1),
             )
-            for frame in tqdm(frames, **tqdm_kwargs):
-                frame_data = raw_data.query(frame, columns="scan")
-                unique_scans, counts = np.unique(frame_data["scan"], return_counts=True)
-                mm.counts[frame, unique_scans] = counts
-
-        return cls.from_tofu(output_path)
+            with MemmappedArrays(
+                folder=output_path,
+                column_to_type_and_shape=scheme,
+                mode="w+",
+            ) as mm:
+                raw_data.query(
+                    frames,
+                    columns={col: arr for col, arr in mm.items() if col != "counts"},
+                )
+                raw_data.count_frame_scan_occurrences(
+                    frames=frames_it, counts=mm.counts
+                )
+            return cls.from_tofu(output_path)
 
     def to_tdf(self, path: str):
         raise NotImplementedError

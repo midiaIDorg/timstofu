@@ -18,6 +18,9 @@ from timstofu.tofu import LexSortedDataset
 
 from opentimspy import OpenTIMS
 
+from timstofu.numba_helper import get_min_int_data_type
+
+import shutil
 
 # precursor_dataset = LexSortedDataset.from_tdf(
 #     "/home/matteo/data_for_midiaID/F9477.d", "precursor"
@@ -30,20 +33,29 @@ from opentimspy import OpenTIMS
 # )
 
 
-folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
-folder_dot_d = "/home/matteo/data_for_midiaID/O11556.d"
 
-# rm -rf /home/matteo/test.tofu
-# rm -rf /home/matteo/O11556.tofu
-%%time
+
+# folder_dot_d = "/home/matteo/data_for_midiaID/O11556.d" # big data
+folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d" # small data
+output_path = "/home/matteo/test.tofu"
+
+shutil.rmtree(output_path)
+
 precursor_dataset = LexSortedDataset.from_tdf(
     folder_dot_d=folder_dot_d,
     level="precursor",
-    output_path="/home/matteo/O11556.tofu",
+    output_path=output_path,
 )
 
+op = OpenTIMS(folder_dot_d)
+# get_min_int_data_type(precursor_dataset.counts.max())
+
+# OK, now make sure the sorting works again and modify code to do that and make it possible to add LexSortedDatasets again.
+
+
+
 # rm -rf /home/matteo/O11556_with_mz.tofu
-%%time
+
 precursor_dataset = LexSortedDataset.from_tdf(
     folder_dot_d=folder_dot_d,
     level="precursor",
@@ -54,6 +66,23 @@ precursor_dataset = LexSortedDataset.from_tdf(
         mz=np.float64,
     ),
 )
+
+# rm -rf /home/matteo/O11556_with_mz.tofu
+%%time
+full_dataset = LexSortedDataset.from_tdf(
+    folder_dot_d=folder_dot_d,
+    level="both",
+    output_path="/home/matteo/O11556_with_mz.tofu",
+    satelite_data_dtypes = dict(
+        tof=np.uint32,
+        intensity=np.uint32,
+        mz=np.float64,
+    ),
+)
+LexSortedDataset.from_tofu("/home/matteo/O11556_with_mz.tofu")
+# OK, now need to implement the other stuff.
+
+
 
 
 precursor_dataset

@@ -6,6 +6,63 @@ import numpy.typing as npt
 import pandas as pd
 
 
+@numba.njit
+def _get_min_int_data_type(x, signed=True):
+    if signed:
+        if x <= 2**7 - 1:
+            return 8
+        elif x <= 2**15 - 1:
+            return 16
+        elif x <= 2**31 - 1:
+            return 32
+        else:
+            return 64
+    else:
+        if x <= 2**8 - 1:
+            return 8
+        elif x <= 2**16 - 1:
+            return 16
+        elif x <= 2**32 - 1:
+            return 32
+        else:
+            return 64
+
+
+def get_min_int_data_type(x, signed: bool = True):
+    """
+    Determine the minimal integer type code required to represent a given value.
+
+    Parameters
+    ----------
+    x : int
+        The input integer value for which to determine the minimal data type.
+    signed : bool, optional
+        Whether to use signed integer types. Defaults to False (unsigned).
+
+    Returns
+    -------
+    int
+        An integer code representing the minimal data type required:
+
+        - If `signed` is False:
+            - 0 → np.uint8
+            - 1 → np.uint16
+            - 2 → np.uint32
+            - 3 → np.uint64
+        - If `signed` is True:
+            - 0 → np.int8
+            - 1 → np.int16
+            - 2 → np.int32
+            - 3 → np.int64
+
+    Notes
+    -----
+    For numba compatibility, use `_get_min_int_data_type` that returns an integer.
+    """
+    bits = _get_min_int_data_type(x, signed)
+    return np.dtype(f"{'int' if signed else 'uint'}{bits}")
+
+
 def inputs_series_to_numpy(foo):
     @functools.wraps(foo)
     def wrapper(*args, **kwargs):
