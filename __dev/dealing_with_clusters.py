@@ -14,6 +14,7 @@ from timstofu.tofu import LexSortedClusters
 clusters_path = "/home/matteo/Projects/midia/midia_experiments/pipelines/devel/midia_pipe/tmp/clusters/tims/reformated/441/clusters.startrek"  # real fragment clusters
 clusters_path = "/home/matteo/tmp/test1.mmappet"  # real fragment clusters
 
+from dictodot import DotDict
 from timstofu.sort_and_pepper import is_lex_nondecreasing
 from timstofu.stats import count2D
 from timstofu.stats import get_precumsums
@@ -38,7 +39,9 @@ if paranoid:
         df.tof.iloc[lex_order],
     )
 
-LexSortedClusters(
+
+# fo
+sorted_clusters = LexSortedClusters(
     index=frame_scan_to_first_idx,
     counts=frame_scan_to_count,
     columns=DotDict(
@@ -48,3 +51,20 @@ LexSortedClusters(
     ),
     frame_scan_to_unique_tofs_count=frame_scan_to_unique_tofs_count,
 )
+
+
+from timstofu.memmapped_tofu import IdentityContext
+
+
+def test_IdentityContext():
+    with IdentityContext(a=10, b=20) as w:
+        assert w == dict(a=10, b=20)
+
+    with IdentityContext(21, a=10, b=20) as w:
+        assert w == ((21,), dict(a=10, b=20))
+
+    with IdentityContext(21, 454) as w:
+        assert w == (21, 454)
+
+    with IdentityContext(21) as w:
+        assert w == (21,)

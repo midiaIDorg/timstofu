@@ -4,6 +4,7 @@ import numpy.typing as npt
 
 import functools
 
+from contextlib import contextmanager
 from pathlib import Path
 from time import time
 
@@ -99,3 +100,47 @@ class MemmappedArrays:
         if exc_type:
             print(f"An exception occurred: {exc_value}")
         return False  # return True to suppress exceptions
+
+
+@contextmanager
+def IdentityContext(*args, **kwargs):
+    """
+    A no-op context manager that simply yields its input arguments.
+
+    This context manager is useful for temporarily wrapping code blocks
+    without introducing side effects. Depending on how it is called, it yields:
+
+    - `kwargs` if only keyword arguments are provided.
+    - `args` if only positional arguments are provided.
+    - A tuple `(args, kwargs)` if both are provided.
+
+    Example usage:
+        with IdentityContext(a=1, b=2) as context:
+            print(context)  # {'a': 1, 'b': 2}
+
+        with IdentityContext(1, 2, 3) as context:
+            print(context)  # (1, 2, 3)
+
+        with IdentityContext(1, 2, a=3) as context:
+            print(context)  # ((1, 2), {'a': 3})
+    """
+    if len(args) == 0:
+        yield kwargs
+    elif len(kwargs) == 0:
+        yield args
+    else:
+        yield args, kwargs
+
+
+def test_IdentityContext():
+    with IdentityContext(a=10, b=20) as w:
+        assert w == dict(a=10, b=20)
+
+    with IdentityContext(21, a=10, b=20) as w:
+        assert w == ((21,), dict(a=10, b=20))
+
+    with IdentityContext(21, 454) as w:
+        assert w == (21, 454)
+
+    with IdentityContext(21) as w:
+        assert w == (21,)
