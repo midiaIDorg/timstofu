@@ -2,16 +2,28 @@
 %load_ext autoreload
 %autoreload 2
 """
+import numba
+import numpy as np
+import numpy as np
+import numpy.typing as npt
+import shutil
+
+from math import inf
 from mmapped_df import open_dataset
 from mmapped_df import open_dataset_dct
 from numba_progress import ProgressBar
+from numba_progress import ProgressBar
 from pathlib import Path
-
-import shutil
-
+from timstofu.sort_and_pepper import argcountsort3D
+from timstofu.sort_and_pepper import is_lex_nondecreasing
 from timstofu.sort_and_pepper import lexargcountsort2D
 from timstofu.sort_and_pepper import lexargcountsort2D_to_3D
+from timstofu.sort_and_pepper import test_count_unique_for_indexed_data
+from timstofu.stats import _count_unique
 from timstofu.stats import count_unique_for_indexed_data
+from timstofu.stats import count_unique_for_indexed_data
+from timstofu.stats import zeros_copy
+from timstofu.tofu import LexSortedClusters
 from timstofu.tofu import LexSortedClusters
 
 
@@ -31,20 +43,22 @@ sorted_clusters_in_ram, lex_order = LexSortedClusters.from_df(
 
 
 
+
+
+
+
+
 sorted_clusters_in_ram == sorted_clusters_on_drive
 
 ######################################################################
-import numba
-import numpy as np
-import numpy.typing as npt
-
-from math import inf
-from numba_progress import ProgressBar
-from timstofu.tofu import LexSortedClusters
 
 
 sorted_clusters = LexSortedClusters.from_tofu("/tmp/test_blah.tofu")
-# sorted_clusters.deduplicate()
+deduplicated_clusters = sorted_clusters.deduplicate()
+
+deduplicated_clusters.columns
+
+
 
 
 unique_counts = sorted_clusters.count_unique_frame_scan_tof_tuples()
@@ -54,14 +68,6 @@ sorted_intensities = sorted_clusters.columns.intensity
 nondeduplicated_counts = sorted_clusters.counts[sorted_clusters.counts>0]
 
 
-import numpy as np
-
-from timstofu.sort_and_pepper import argcountsort3D
-from timstofu.sort_and_pepper import is_lex_nondecreasing
-from timstofu.sort_and_pepper import test_count_unique_for_indexed_data
-from timstofu.stats import _count_unique
-from timstofu.stats import count_unique_for_indexed_data
-from timstofu.stats import zeros_copy
 
 xx = np.array([1, 1, 1, 1, 2, 2, 2])
 yy = np.array([2, 1, 2, 1, 1, 2, 1])

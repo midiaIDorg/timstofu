@@ -11,18 +11,12 @@ from tqdm import tqdm
 
 from timstofu.numba_helper import add_matrices_with_potentially_different_shapes
 from timstofu.numba_helper import split_args_into_K
-
-from timstofu.sort_and_pepper import deduplicate
-from timstofu.sort_and_pepper import presort_tofs_and_intensities_per_frame_scan
-from timstofu.sort_and_pepper import sort_events_lexicographically_per_frame_scan_tof
-from timstofu.sort_and_pepper import sorted_in_frame_scan_groups
-
 from timstofu.numba_helper import write_orderly
 
 from timstofu.sort_and_pepper import argcountsort3D
+from timstofu.sort_and_pepper import deduplicate
 from timstofu.sort_and_pepper import is_lex_nondecreasing
 
-from timstofu.memmapped_tofu import IdentityContext
 from timstofu.memmapped_tofu import MemmappedArrays
 from timstofu.memmapped_tofu import open_memmapped_data
 
@@ -399,122 +393,3 @@ class LexSortedDataset(CompactDataset):
 
     def to_tdf(self, path: str):
         raise NotImplementedError
-
-
-# TODO: make obsolete
-def sort_and_deduplicate_clusters(
-    clusters_df: pd.DataFrame,
-    paranoid: bool = False,
-) -> tuple[CompactDataset, CompactDataset]:
-    """Sort clusters by frame, scan, and tof, and deduplicate it to retain only unique pairs.
-
-    Intensities of the same events, (frame, scan, tof)-wise, from different clusters will be added.
-
-    Arguments:
-        clusters_df (pd.DataFrame): A data frame with clustered events. Clusters are recognized by column ClusterID.
-        paranoid (bool): Do checks that inidicate a need to visit a psychiastrist and fast.
-
-    Returns:
-        tuple: Deduplicated dataset and sorted dataset.
-    """
-    for col in ("ClusterID", "frame", "scan", "tof", "intensity"):
-        assert col in clusters_df.columns
-
-    clusters = DotDict.FromFrame(clusters_df)
-
-    simulated_events_count = len(clusters.frame)
-    frame_scan_to_count, *frame_scan_ranges = count2D(
-        clusters["frame"], clusters["scan"]
-    )
-    frame_scan_to_first_idx = get_precumsums(frame_scan_to_count)
-
-    with ProgressBar(
-        total=simulated_events_count,
-        desc="Binning (tof,intensity) inside (frame,scan) groups",
-    ) as progress_proxy:
-        (
-            sorted_tofs,  # presorted by frame and scan
-            sorted_intensities,  # presorted by frame and scan
-            sorted_cluster_ids,  # presorted by frame and scan
-        ) = presort_tofs_and_intensities_per_frame_scan(
-            frame_scan_to_first_idx=frame_scan_to_first_idx,
-            frame_scan_to_count=frame_scan_to_count,
-            frames=clusters.frame,
-            scans=clusters.scan,
-            tofs=clusters.tof,
-            intensities=clusters.intensity,
-            cluster_ids=clusters.ClusterID,
-            progress_proxy=progress_proxy,
-        )
-
-    total_frame_scan_pairs = np.count_nonzero(frame_scan_to_count)
-
-    with ProgressBar(
-        total=total_frame_scan_pairs,
-        desc="Sorting (tof,intensity) within (frame,scan) groups",
-    ) as progress_proxy:
-        frame_scan_to_unique_tofs_count = sort_events_lexicographically_per_frame_scan_tof(
-            frame_scan_to_first_idx=frame_scan_to_first_idx,
-            frame_scan_to_count=frame_scan_to_count,
-            frame_scan_sorted_tofs=sorted_tofs,  # fully sorted after this finishes
-            frame_scan_sorted_intensities=sorted_intensities,  # fully sorted after this finishes
-            frame_scan_sorted_cluster_ids=sorted_cluster_ids,
-            progress_proxy=progress_proxy,
-        )
-
-    assert np.all(frame_scan_to_unique_tofs_count <= frame_scan_to_count)
-    assert np.all(frame_scan_to_unique_tofs_count[frame_scan_to_count > 0] > 0)
-
-    if paranoid:
-        with ProgressBar(
-            total=total_frame_scan_pairs,
-            desc="Checking if TOFs are sorted in groups of (frame,scan)",
-        ) as progress_proxy:
-            assert sorted_in_frame_scan_groups(
-                sorted_tofs,
-                frame_scan_to_first_idx,
-                frame_scan_to_count,
-                progress_proxy,
-            )
-
-    deduplicated_event_count = frame_scan_to_unique_tofs_count.sum()
-    counts = frame_scan_to_count[frame_scan_to_count > 0]
-
-    if paranoid:
-        assert len(sorted_tofs) == frame_scan_to_count[frame_scan_to_count > 0].sum()
-        assert len(sorted_intensities) == len(sorted_tofs)
-
-    sorted_dataset = CompactDataset(
-        frame_scan_to_first_idx,
-        frame_scan_to_count,
-        DotDict(
-            tof=sorted_tofs,
-            intensity=sorted_intensities,
-            ClusterID=sorted_cluster_ids,
-        ),
-    )
-
-    with ProgressBar(
-        total=simulated_events_count,
-        desc="Deduplicating (tof,intensity) pairs per (frame,scan)",
-    ) as progress_proxy:
-        dedup_tofs, dedup_intensities = deduplicate(
-            sorted_tofs,
-            sorted_intensities,
-            frame_scan_to_count[frame_scan_to_count > 0],
-            deduplicated_event_count,
-            progress_proxy,
-        )
-
-    frame_scan_to_first_unique_idx = get_precumsums(frame_scan_to_unique_tofs_count)
-
-    unique_dataset = CompactDataset(
-        frame_scan_to_first_unique_idx,
-        frame_scan_to_unique_tofs_count,
-        DotDict(
-            tof=dedup_tofs,
-            intensity=dedup_intensities,
-        ),
-    )
-
-    return unique_dataset, sorted_dataset

@@ -84,93 +84,6 @@ is_lex_strictly_increasing = inputs_series_to_numpy(_is_lex_strictly_increasing)
 
 
 @numba.njit(boundscheck=True, cache=True)
-def presort_tofs_and_intensities_per_frame_scan(
-    frame_scan_to_first_idx: npt.NDArray,
-    frame_scan_to_count: npt.NDArray,
-    frames: npt.NDArray,
-    scans: npt.NDArray,
-    tofs: npt.NDArray,
-    intensities: npt.NDArray,
-    cluster_ids: npt.NDArray,
-    progress_proxy: ProgressBar | None = None,
-) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
-    """Partially sort tofs, intensities, and cluster_ids by frames and scans.
-
-    Within those groups, tofs (and paired intensities and cluster_ids) are not sorted yet.
-    """
-    frame_scan_sorted_tofs = empty_copy(tofs)
-    frame_scan_sorted_intensities = empty_copy(intensities)
-    frame_scan_sorted_cluster_ids = empty_copy(cluster_ids)
-    frame_scan_to_idx = frame_scan_to_first_idx.copy()
-    for frame, scan, tof, intensity, cluster_id in zip(
-        frames, scans, tofs, intensities, cluster_ids
-    ):
-        idx = frame_scan_to_idx[frame, scan]
-        frame_scan_sorted_tofs[idx] = tof
-        frame_scan_sorted_intensities[idx] = intensity
-        frame_scan_sorted_cluster_ids[idx] = cluster_id
-        frame_scan_to_idx[frame, scan] += 1
-        if progress_proxy is not None:
-            progress_proxy.update(1)
-    assert np.all(
-        frame_scan_to_idx == frame_scan_to_first_idx + frame_scan_to_count
-    ), "For some frame and scan we did not iterate the predicted number of times."
-    return (
-        frame_scan_sorted_tofs,
-        frame_scan_sorted_intensities,
-        frame_scan_sorted_cluster_ids,
-    )
-
-
-@numba.njit(boundscheck=True, parallel=True, cache=True)
-def sort_events_lexicographically_per_frame_scan_tof(
-    frame_scan_to_first_idx: npt.NDArray,
-    frame_scan_to_count: npt.NDArray,
-    frame_scan_sorted_tofs: npt.NDArray,
-    frame_scan_sorted_intensities: npt.NDArray,
-    frame_scan_sorted_cluster_ids: npt.NDArray,
-    progress_proxy: ProgressBar | None = None,
-) -> npt.NDArray:
-    """Fully sort frame-scan presorted tofs and intensities."""
-    frame_scan_to_unique_tofs_count = zeros_copy(frame_scan_to_first_idx)
-    frames, scans = frame_scan_to_count.nonzero()
-    for i in numba.prange(len(scans)):
-        frame = frames[i]
-        scan = scans[i]
-        first_idx = frame_scan_to_first_idx[frame, scan]
-        last_idx = first_idx + frame_scan_to_count[frame, scan]
-        tofs = frame_scan_sorted_tofs[first_idx:last_idx]
-        intensities = frame_scan_sorted_intensities[first_idx:last_idx]
-        cluster_ids = frame_scan_sorted_cluster_ids[first_idx:last_idx]
-        order = np.argsort(tofs)
-        frame_scan_sorted_tofs[first_idx:last_idx] = tofs[order]
-        frame_scan_sorted_intensities[first_idx:last_idx] = intensities[order]
-        frame_scan_sorted_cluster_ids[first_idx:last_idx] = cluster_ids[order]
-        frame_scan_to_unique_tofs_count[frame, scan] = _count_unique(tofs)
-        if progress_proxy is not None:
-            progress_proxy.update(1)
-    return frame_scan_to_unique_tofs_count
-
-
-@numba.njit(boundscheck=True, cache=True)
-def sorted_in_frame_scan_groups(
-    presumably_sorted_tofs: npt.NDArray,
-    frame_scan_to_first_idx: npt.NDArray,
-    frame_scan_to_count: npt.NDArray,
-    progress_proxy: ProgressBar | None = None,
-):
-    frames, scans = frame_scan_to_count.nonzero()
-    for frame, scan in zip(frames, scans):
-        first_idx = frame_scan_to_first_idx[frame, scan]
-        last_idx = first_idx + frame_scan_to_count[frame, scan]
-        if not _is_nondecreasing(presumably_sorted_tofs[first_idx:last_idx]):
-            return False, frame, scan
-        if progress_proxy is not None:
-            progress_proxy.update(1)
-    return True, frame, scan
-
-
-@numba.njit(boundscheck=True, cache=True)
 def deduplicate(
     sorted_tofs: npt.NDArray,
     sorted_intensities: npt.NDArray,
@@ -307,56 +220,6 @@ def lexargcountsort2D_to_3D(
     return xy_to_xyz_order
 
 
-# OBSOLETE
-@numba.njit(boundscheck=True)
-def frame_scan_tof_argsort(
-    frame_scan_to_first_idx: npt.NDArray,
-    frame_scan_to_count: npt.NDArray,
-    frame_scan_ordered_tofs: npt.NDArray,
-) -> npt.NDArray:
-    frame_scan_tof_order = np.empty(
-        dtype=frame_scan_to_first_idx.dtype,
-        shape=frame_scan_ordered_tofs.shape,
-    )
-    for frame, scan in zip(*frame_scan_to_count.nonzero()):
-        first_idx = frame_scan_to_first_idx[frame, scan]
-        last_idx = first_idx + frame_scan_to_count[frame, scan]
-        group_order = np.argsort(frame_scan_ordered_tofs[first_idx:last_idx])
-        frame_scan_tof_order[first_idx:last_idx] = first_idx + group_order
-    return frame_scan_tof_order
-
-
-def test_frame_scan_tof_argsort():
-    frames = np.array([2, 2, 2, 1, 1, 2, 2, 3, 3])
-    scans = np.array([2, 2, 2, 5, 4, 3, 4, 2, 1])
-    tofs = np.array([3, 2, 12, 355, 424, 23, 4, 2, 1])
-
-    frame_scan_to_count, *_ = count2D(frames, scans)
-    frame_scan_to_first_idx = get_precumsums(frame_scan_to_count)
-    our_order = lexargcountsort2D(
-        frames,
-        scans,
-        frame_scan_to_first_idx + frame_scan_to_count,
-    )
-    expected_order = np.lexsort((scans, frames))
-    np.testing.assert_array_equal(our_order, expected_order)
-
-    final_order = lexargcountsort2D_to_3D(
-        frame_scan_to_first_idx,
-        frame_scan_to_count,
-        tofs[our_order],
-        our_order,
-    )
-
-    expected_final_order = np.lexsort((tofs, scans, frames))
-
-    for xx in (frames, scans, tofs):
-        np.testing.assert_array_equal(
-            xx[final_order],
-            xx[expected_final_order],
-        )
-
-
 @inputs_series_to_numpy
 def argcountsort3D(
     xx: npt.NDArray | pd.Series,
@@ -399,6 +262,21 @@ def argcountsort3D(
     if return_counts:
         return xyz_order, xy2count, xy2first_idx
     return xyz_order
+
+
+def test_argcountsort3D():
+    xx = np.array([2, 2, 2, 1, 1, 2, 2, 3, 3])
+    yy = np.array([2, 2, 2, 5, 4, 3, 4, 2, 1])
+    zz = np.array([3, 2, 12, 355, 424, 23, 4, 2, 1])
+
+    order = argcountsort3D(xx, yy, zz)
+    expected_order = np.lexsort((zz, yy, xx))
+
+    for tt in (xx, yy, zz):
+        np.testing.assert_array_equal(
+            tt[order],
+            tt[expected_order],
+        )
 
 
 def test_count_unique_for_indexed_data():
