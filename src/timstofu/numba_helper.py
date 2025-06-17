@@ -155,3 +155,12 @@ def test_add_matrices_with_potentially_different_shapes():
     result = add_matrices_with_potentially_different_shapes(a, b, c)
     expected = np.array([[14, 8, 7], [12, 4, 0], [10, 0, 0]])
     np.testing.assert_array_equal(result, expected)
+
+
+@numba.njit
+def write_orderly(in_arr, out_arr, order) -> None:
+    """Write fron in_arr to out_arr using order."""
+    assert len(in_arr) == len(out_arr)
+    assert len(in_arr) == len(order)
+    for i in range(len(in_arr)):
+        out_arr[i] = in_arr[order[i]]

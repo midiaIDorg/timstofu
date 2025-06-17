@@ -107,8 +107,8 @@ def IdentityContext(*args, **kwargs):
     """
     A no-op context manager that simply yields its input arguments.
 
-    This context manager is useful for temporarily wrapping code blocks
-    without introducing side effects. Depending on how it is called, it yields:
+    The main use is to provide an alternative to other context manages,
+    e.g. MemmappedArrays, so that `with` can be used independent of the actual context manager.
 
     - `kwargs` if only keyword arguments are provided.
     - `args` if only positional arguments are provided.

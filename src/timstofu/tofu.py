@@ -17,6 +17,12 @@ from timstofu.sort_and_pepper import presort_tofs_and_intensities_per_frame_scan
 from timstofu.sort_and_pepper import sort_events_lexicographically_per_frame_scan_tof
 from timstofu.sort_and_pepper import sorted_in_frame_scan_groups
 
+from timstofu.numba_helper import write_orderly
+
+from timstofu.sort_and_pepper import argcountsort3D
+from timstofu.sort_and_pepper import is_lex_nondecreasing
+
+from timstofu.memmapped_tofu import IdentityContext
 from timstofu.memmapped_tofu import MemmappedArrays
 from timstofu.memmapped_tofu import open_memmapped_data
 
@@ -156,6 +162,24 @@ class CompactDataset:
         counts = columns.pop("counts")
         return cls(index=get_precumsums(counts), counts=counts, columns=columns)
 
+    def __eq__(self, other):
+        try:
+            np.testing.assert_equal(self.counts, other.counts)
+        except AssertionError:
+            return False
+        try:
+            np.testing.assert_equal(self.index, other.index)
+        except AssertionError:
+            return False
+        if set(self.columns) != set(other.columns):
+            return False
+        for col in self.columns:
+            try:
+                np.testing.assert_equal(self.columns[col], other.columns[col])
+            except AssertionError:
+                return False
+        return True
+
 
 # I just direclty need that function.
 
@@ -167,7 +191,7 @@ class CompactDataset:
 # The latter I need for adding noise on top of a dataset.
 
 
-@dataclass
+@dataclass(eq=False)
 class LexSortedClusters(CompactDataset):
     frame_scan_to_unique_tofs_count: npt.NDArray | None = (
         None  # this not at all elegant. more like an elephant.
@@ -177,8 +201,9 @@ class LexSortedClusters(CompactDataset):
     def from_df(
         cls,
         df: pd.DataFrame,
-        presort: bool = True,
+        output_folder: str | Path | None = None,
         paranoid: bool = False,
+        force: bool = False,
     ) -> CompactDataset:
         """
         Arguments:
@@ -186,79 +211,52 @@ class LexSortedClusters(CompactDataset):
             presort (bool): Presort clusters in (frame,scan) but not tof.
             paranoid (bool): Do checks that inidicate a need to visit a psychiastrist and fast.
         """
-        for col in ("frame", "scan", "tof", "intensity", "ClusterID"):
-            assert col in df.columns
-
-        frame_scan_to_count, *frame_scan_ranges = count2D(df["frame"], df["scan"])
-        frame_scan_to_first_idx = get_precumsums(frame_scan_to_count)
-
-        if presort:
-            with ProgressBar(
-                total=len(df),
-                desc="Binning (tof,intensity) inside (frame,scan) groups",
-            ) as progress_proxy:
-                (
-                    sorted_tofs,  # presorted by frame and scan
-                    sorted_intensities,  # presorted by frame and scan
-                    sorted_cluster_ids,  # presorted by frame and scan
-                ) = presort_tofs_and_intensities_per_frame_scan(
-                    frame_scan_to_first_idx=frame_scan_to_first_idx,
-                    frame_scan_to_count=frame_scan_to_count,
-                    frames=df.frame.to_numpy(),
-                    scans=df.scan.to_numpy(),
-                    tofs=df.tof.to_numpy(),
-                    intensities=df.intensity.to_numpy(),
-                    cluster_ids=df.ClusterID.to_numpy(),
-                    progress_proxy=progress_proxy,
-                )
-        total_frame_scan_pairs = np.count_nonzero(frame_scan_to_count)
-
-        with ProgressBar(
-            total=total_frame_scan_pairs,
-            desc="Sorting (tof,intensity) within (frame,scan) groups",
-        ) as progress_proxy:
-            frame_scan_to_unique_tofs_count = sort_events_lexicographically_per_frame_scan_tof(
-                frame_scan_to_first_idx=frame_scan_to_first_idx,
-                frame_scan_to_count=frame_scan_to_count,
-                frame_scan_sorted_tofs=sorted_tofs,  # fully sorted after this finishes
-                frame_scan_sorted_intensities=sorted_intensities,  # fully sorted after this finishes
-                frame_scan_sorted_cluster_ids=sorted_cluster_ids,
-                progress_proxy=progress_proxy,
-            )
-
-        assert np.all(frame_scan_to_unique_tofs_count <= frame_scan_to_count)
-        assert np.all(frame_scan_to_unique_tofs_count[frame_scan_to_count > 0] > 0)
-
-        if paranoid:
-            with ProgressBar(
-                total=total_frame_scan_pairs,
-                desc="Checking if TOFs are sorted in groups of (frame,scan)",
-            ) as progress_proxy:
-                assert sorted_in_frame_scan_groups(
-                    sorted_tofs,
-                    frame_scan_to_first_idx,
-                    frame_scan_to_count,
-                    progress_proxy,
-                )
-
-        counts = frame_scan_to_count[frame_scan_to_count > 0]
-
-        if paranoid:
-            assert (
-                len(sorted_tofs) == frame_scan_to_count[frame_scan_to_count > 0].sum()
-            )
-            assert len(sorted_intensities) == len(sorted_tofs)
-
-        return cls(
-            index=frame_scan_to_first_idx,
-            counts=frame_scan_to_count,
-            columns=DotDict(
-                tof=sorted_tofs,
-                intensity=sorted_intensities,
-                ClusterID=sorted_cluster_ids,
-            ),
-            frame_scan_to_unique_tofs_count=frame_scan_to_unique_tofs_count,
+        dd = DotDict(
+            df if isinstance(df, dict) else {c: df[c].to_numpy(copy=False) for c in df}
         )
+        for col in ("frame", "scan", "tof", "intensity", "ClusterID"):
+            assert col in dd
+
+        satellite_columns = set(dd) - set(["frame", "scan"])
+
+        frame_scan_to_count, *_ = count2D(dd.frame, dd.scan)
+        frame_scan_to_first_idx = get_precumsums(frame_scan_to_count)
+        lex_order = argcountsort3D(dd.frame, dd.scan, dd.tof)
+
+        if paranoid:
+            assert is_lex_nondecreasing(
+                dd.frame[lex_order], dd.scan[lex_order], dd.tof[lex_order]
+            ), "We did not get a lexicographically sorted data."
+
+        if output_folder is None:
+            return LexSortedClusters(
+                index=frame_scan_to_first_idx,
+                counts=frame_scan_to_count,
+                columns=DotDict({c: dd[c][lex_order] for c in satellite_columns}),
+                frame_scan_to_unique_tofs_count=None,
+            )
+
+        output_folder = Path(output_folder)
+        output_folder.mkdir(parents=True, exist_ok=force)
+        with MemmappedArrays(
+            folder=output_folder,
+            column_to_type_and_shape={
+                "counts": (frame_scan_to_count.dtype, frame_scan_to_count.shape),
+                **{c: (dd[c].dtype, dd[c].shape) for c in satellite_columns},
+            },
+            mode="w+",
+        ) as context:
+            context["counts"][:] = frame_scan_to_count
+            columns = DotDict()
+            for c in satellite_columns:
+                write_orderly(in_arr=dd[c], out_arr=context[c], order=lex_order)
+                columns[c] = context[c]
+            return LexSortedClusters(
+                index=frame_scan_to_first_idx,
+                counts=context["counts"],
+                columns=columns,
+                frame_scan_to_unique_tofs_count=None,
+            )
 
     def deduplicate(self) -> LexSortedDataset:
         assert self.frame_scan_to_unique_tofs_count is not None
@@ -284,7 +282,7 @@ class LexSortedClusters(CompactDataset):
         )
 
 
-@dataclass
+@dataclass(eq=False)  # stupid dataclass bullshit.
 class LexSortedDataset(CompactDataset):
     """A tdf equivalent."""
 
@@ -383,13 +381,15 @@ class LexSortedDataset(CompactDataset):
                 folder=output_path,
                 column_to_type_and_shape=scheme,
                 mode="w+",
-            ) as mm:
+            ) as context:
                 raw_data.query(
                     frames,
-                    columns={col: arr for col, arr in mm.items() if col != "counts"},
+                    columns={
+                        col: arr for col, arr in context.items() if col != "counts"
+                    },
                 )
                 raw_data.count_frame_scan_occurrences(
-                    frames=frames_it, counts=mm.counts
+                    frames=frames_it, counts=context.counts
                 )
             return cls.from_tofu(output_path)
 
