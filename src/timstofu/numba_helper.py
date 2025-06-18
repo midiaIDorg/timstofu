@@ -165,12 +165,17 @@ def test_add_matrices_with_potentially_different_shapes():
 
 
 @numba.njit
-def write_orderly(in_arr, out_arr, order) -> None:
+def write_orderly(
+    in_arr: npt.NDArray,
+    out_arr: npt.NDArray,
+    order: npt.NDArray,
+) -> npt.NDArray:
     """Write fron in_arr to out_arr using order."""
     assert len(in_arr) == len(out_arr)
     assert len(in_arr) == len(order)
     for i in range(len(in_arr)):
         out_arr[i] = in_arr[order[i]]
+    return out_arr
 
 
 @numba.njit(cache=True)

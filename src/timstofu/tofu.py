@@ -1,32 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from numba_progress import ProgressBar
-from opentimspy import OpenTIMS
 from pathlib import Path
 from typing import Any
 
 from dictodot import DotDict
+from mmapuccino import MmapedArrayValuedDict
+from mmapuccino import empty
+from mmapuccino import zeros
+from numba_progress import ProgressBar
+from opentimspy import OpenTIMS
 from tqdm import tqdm
 
 from timstofu.numba_helper import add_matrices_with_potentially_different_shapes
-from timstofu.numba_helper import overwrite
 from timstofu.numba_helper import split_args_into_K
 from timstofu.numba_helper import write_orderly
 
 from timstofu.sort_and_pepper import argcountsort3D
 from timstofu.sort_and_pepper import deduplicate
 from timstofu.sort_and_pepper import is_lex_nondecreasing
-
-# START OBSOLETE
-from timstofu.memmapped_tofu import ArrayContext
-from timstofu.memmapped_tofu import MemmappedArrays  # TODO: remove
-from timstofu.memmapped_tofu import NoneContext
-from timstofu.memmapped_tofu import open_memmapped_data
-
-# END OBSOLETE
-
-from timstofu.mmapuccino import empty
 
 from timstofu.stats import count2D
 from timstofu.stats import count_unique_for_indexed_data
@@ -36,6 +28,12 @@ import numba
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+
+
+# START OBSOLETE
+from timstofu.memmapped_tofu import MemmappedArrays  # TODO: remove
+
+# END OBSOLETE
 
 
 # TODO: generalize to collections of arrays: will be simpler.
@@ -98,12 +96,14 @@ def combine_datasets(
 
 @dataclass
 class CompactDataset:
-    index: npt.NDArray
     counts: npt.NDArray
     columns: DotDict
+    index: npt.NDArray | None = None
 
     def __post_init__(self):
         assert len(self.columns) > 0
+        if self.index is None:
+            self.index = get_precumsums(self.counts)
         assert len(self.index.shape) == 2
         assert self.index.shape == self.counts.shape
         first_arr = None
@@ -162,10 +162,9 @@ class CompactDataset:
         )
 
     @classmethod
-    def from_tofu(cls, folder: str | Path, mode="r", **kwargs):
-        columns = open_memmapped_data(folder)
-        counts = columns.pop("counts")
-        return cls(index=get_precumsums(counts), counts=counts, columns=columns)
+    def from_tofu(cls, folder: str | Path, mode="r", *args, **kwargs):
+        dct = MmapedArrayValuedDict(folder=folder, mode=mode, *args, **kwargs)
+        return cls(counts=dct.data.pop("counts"), columns=dct.data)
 
     def __eq__(self, other):
         try:
@@ -199,13 +198,14 @@ class LexSortedClusters(CompactDataset):
         df: pd.DataFrame | dict[str, npt.NDArray],
         output_folder: str | Path | None = None,
         paranoid: bool = False,
-        force: bool = False,
+        _empty: Callable = empty,
     ) -> tuple[CompactDataset, npt.NDArray]:
         """
         Arguments:
             df (pd.DataFrame): Opened data frame with ClusterID column.
             presort (bool): Presort clusters in (frame,scan) but not tof.
             paranoid (bool): Do checks that inidicate a need to visit a psychiastrist and fast.
+            _empty (Callable): Allocator of empty space. Defaults to a wrapper around np.empty.
         """
         for col in ("frame", "scan", "tof", "intensity", "ClusterID"):
             assert col in df
@@ -213,10 +213,15 @@ class LexSortedClusters(CompactDataset):
         dd = DotDict(
             df if isinstance(df, dict) else {c: df[c].to_numpy(copy=False) for c in df}
         )
-        satellite_columns = set(dd) - set(["frame", "scan"])
 
-        frame_scan_to_count, *_ = count2D(dd.frame, dd.scan)
-        frame_scan_to_first_idx = get_precumsums(frame_scan_to_count)
+        # TODO: this can be reworked later on.
+        _frame_scan_to_count, *_ = count2D(dd.frame, dd.scan)
+        frame_scan_to_count = _empty(
+            name="counts",
+            dtype=_frame_scan_to_count.dtype.str,
+            shape=_frame_scan_to_count.shape,
+        )
+        frame_scan_to_count[:] = _frame_scan_to_count
         lex_order = argcountsort3D(dd.frame, dd.scan, dd.tof)
 
         if paranoid:
@@ -224,40 +229,23 @@ class LexSortedClusters(CompactDataset):
                 dd.frame[lex_order], dd.scan[lex_order], dd.tof[lex_order]
             ), "We did not get a lexicographically sorted data."
 
-        if output_folder is None:
-            return (
-                LexSortedClusters(
-                    index=frame_scan_to_first_idx,
-                    counts=frame_scan_to_count,
-                    columns=DotDict({c: dd[c][lex_order] for c in satellite_columns}),
+        satelite_data_names = set(dd) - {"frame", "scan"}
+        return (
+            LexSortedClusters(  # we could pass in index from argcountsort3D...
+                counts=frame_scan_to_count,
+                columns=DotDict(
+                    {
+                        c: write_orderly(
+                            dd[c],
+                            _empty(name=c, dtype=dd[c].dtype.str, shape=dd[c].shape),
+                            lex_order,
+                        )
+                        for c in satelite_data_names
+                    }
                 ),
-                lex_order,
-            )
-
-        # Not elegant at all. But simple.
-        output_folder = Path(output_folder)
-        output_folder.mkdir(parents=True, exist_ok=force)
-        with MemmappedArrays(
-            folder=output_folder,
-            column_to_type_and_shape={
-                "counts": (frame_scan_to_count.dtype, frame_scan_to_count.shape),
-                **{c: (dd[c].dtype, dd[c].shape) for c in satellite_columns},
-            },
-            mode="w+",
-        ) as context:
-            context["counts"][:] = frame_scan_to_count
-            columns = DotDict()
-            for c in satellite_columns:
-                write_orderly(in_arr=dd[c], out_arr=context[c], order=lex_order)
-                columns[c] = context[c]
-            return (
-                LexSortedClusters(
-                    index=frame_scan_to_first_idx,
-                    counts=context["counts"],
-                    columns=columns,
-                ),
-                lex_order,
-            )
+            ),
+            lex_order,
+        )
 
     def count_unique_frame_scan_tof_tuples(
         self, unique_counts: npt.NDArray | None = None
@@ -290,15 +278,13 @@ class LexSortedClusters(CompactDataset):
         self,
         ProgressBarKwargs: dict[str, Any] = {},
         _empty: Callable = empty,
+        _zeros: Callable = zeros,
     ) -> LexSortedDataset:
         unique_counts = self.count_unique_frame_scan_tof_tuples(
-            unique_counts=overwrite(
-                _empty(
-                    name="counts",
-                    shape=self.counts.shape,
-                    dtype=self.counts.dtype.str,
-                ),
-                what_with=0,
+            unique_counts=_zeros(
+                name="counts",
+                shape=self.counts.shape,
+                dtype=self.counts.dtype.str,
             )
         )
         total_unique_cnt = unique_counts.sum()  # the size of things.
@@ -307,13 +293,10 @@ class LexSortedClusters(CompactDataset):
             shape=total_unique_cnt,
             dtype=self.columns.tof.dtype.str,
         )
-        dedup_intensities = overwrite(
-            _empty(
-                name="intensity",
-                shape=total_unique_cnt,
-                dtype=self.columns.intensity.dtype.str,
-            ),
-            what_with=0,
+        dedup_intensities = _zeros(
+            name="intensity",
+            shape=total_unique_cnt,
+            dtype=self.columns.intensity.dtype.str,
         )
         consecutive_frame_scan_groups_cnts = self.counts[self.counts > 0]
 
@@ -347,6 +330,7 @@ class LexSortedClusters(CompactDataset):
 class LexSortedDataset(CompactDataset):
     """A tdf equivalent."""
 
+    # TODO: missing memmap interface.
     @classmethod
     def from_df(cls, df: pd.DataFrame) -> CompactDataset:
         """
@@ -360,11 +344,8 @@ class LexSortedDataset(CompactDataset):
             "ClusterID" not in df.columns
         ), "For representing Clusters, please use `SortedClusters.from_df`."
 
-        frame_scan_to_count, *frame_scan_ranges = count2D(df["frame"], df["scan"])
-        frame_scan_to_first_idx = get_precumsums(frame_scan_to_count)
         return cls(
-            index=frame_scan_to_first_idx,
-            counts=frame_scan_to_count,
+            counts=count2D(df["frame"], df["scan"])[0],
             columns=DotDict(
                 tof=df.tof.to_numpy(),
                 intensity=df.intensity.to_numpy(),

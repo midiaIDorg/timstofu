@@ -17,6 +17,7 @@ dependencies = [
     "pandas",# making that optional would be great.
     "opentimspy @git+https://github.com/michalsta/opentims.git",
     "dictodot @git+https://github.com/MatteoLacki/dictodot.git",
+    "mmapuccino @git+https://github.com/MatteoLacki/mmapuccino.git",
     "mmapped_df @git+https://github.com/michalsta/mmapped_df.git",
     "tqdm",
 ]

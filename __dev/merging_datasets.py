@@ -24,7 +24,6 @@ from timstofu.tofu import LexSortedClusters
 from timstofu.tofu import LexSortedDataset
 
 
-folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"  # small data
 precursor_dataset = LexSortedDataset.from_tdf(
     folder_dot_d=folder_dot_d,
     level="precursor",
