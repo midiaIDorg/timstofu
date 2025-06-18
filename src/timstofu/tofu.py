@@ -10,6 +10,7 @@ from dictodot import DotDict
 from tqdm import tqdm
 
 from timstofu.numba_helper import add_matrices_with_potentially_different_shapes
+from timstofu.numba_helper import overwrite
 from timstofu.numba_helper import split_args_into_K
 from timstofu.numba_helper import write_orderly
 
@@ -17,8 +18,15 @@ from timstofu.sort_and_pepper import argcountsort3D
 from timstofu.sort_and_pepper import deduplicate
 from timstofu.sort_and_pepper import is_lex_nondecreasing
 
-from timstofu.memmapped_tofu import MemmappedArrays
+# START OBSOLETE
+from timstofu.memmapped_tofu import ArrayContext
+from timstofu.memmapped_tofu import MemmappedArrays  # TODO: remove
+from timstofu.memmapped_tofu import NoneContext
 from timstofu.memmapped_tofu import open_memmapped_data
+
+# END OBSOLETE
+
+from timstofu.mmapuccino import empty
 
 from timstofu.stats import count2D
 from timstofu.stats import count_unique_for_indexed_data
@@ -226,6 +234,7 @@ class LexSortedClusters(CompactDataset):
                 lex_order,
             )
 
+        # Not elegant at all. But simple.
         output_folder = Path(output_folder)
         output_folder.mkdir(parents=True, exist_ok=force)
         with MemmappedArrays(
@@ -250,9 +259,24 @@ class LexSortedClusters(CompactDataset):
                 lex_order,
             )
 
-    def count_unique_frame_scan_tof_tuples(self):
+    def count_unique_frame_scan_tof_tuples(
+        self, unique_counts: npt.NDArray | None = None
+    ):
+        """Count unique (frame,scan,tof) occurrences among all events per each (frame,scan) pair.
+
+        Parameters
+        ----------
+        unique_counts (np.array): Optional preallocated array.
+
+        Returns
+        -------
+        np.array: Counts of unique occurrences of (frame, scan, tof) per (frame,scan)
+        """
         unique_counts = count_unique_for_indexed_data(
-            self.columns.tof, self.counts, self.index
+            self.columns.tof,
+            self.counts,
+            self.index,
+            unique_counts,
         )
         assert np.all(
             unique_counts <= self.counts
@@ -260,19 +284,55 @@ class LexSortedClusters(CompactDataset):
         return unique_counts
 
     # TODO: must also be able to produce memory mapped files.
-    def deduplicate(self) -> LexSortedDataset:
-        unique_counts = self.count_unique_frame_scan_tof_tuples()
-        with ProgressBar(
-            total=len(self),
-            desc="Deduplicating (tof,intensity) pairs per (frame,scan)",
-        ) as progress_proxy:
+    # TODO: it would be nice to have a mechanism to make the decision about the memmapped serializer outside the function, to support mine and Michals when he does it. The IdentityContext might be useful here after all.
+    # THIS MIGHT BE ENOUGH: A CONTEXT MANAGER THAT KNOWS HOW TO ASSIGN NAMES AND HAS ZEROS AND EMPTY.
+    def deduplicate(
+        self,
+        ProgressBarKwargs: dict[str, Any] = {},
+        _empty: Callable = empty,
+    ) -> LexSortedDataset:
+        unique_counts = self.count_unique_frame_scan_tof_tuples(
+            unique_counts=overwrite(
+                _empty(
+                    name="counts",
+                    shape=self.counts.shape,
+                    dtype=self.counts.dtype.str,
+                ),
+                what_with=0,
+            )
+        )
+        total_unique_cnt = unique_counts.sum()  # the size of things.
+        dedup_tofs = _empty(
+            name="tof",
+            shape=total_unique_cnt,
+            dtype=self.columns.tof.dtype.str,
+        )
+        dedup_intensities = overwrite(
+            _empty(
+                name="intensity",
+                shape=total_unique_cnt,
+                dtype=self.columns.intensity.dtype.str,
+            ),
+            what_with=0,
+        )
+        consecutive_frame_scan_groups_cnts = self.counts[self.counts > 0]
+
+        ProgressBarKwargs["total"] = len(self)  # I know better...
+        ProgressBarKwargs["desc"] = ProgressBarKwargs.get(
+            "desc", "Deduplicating (tof,intensity) pairs per (frame,scan)"
+        )
+
+        with ProgressBar(**ProgressBarKwargs) as progress_proxy:
             dedup_tofs, dedup_intensities = deduplicate(
                 self.columns.tof,
                 self.columns.intensity,
-                self.counts[self.counts > 0],
-                unique_counts.sum(),
+                consecutive_frame_scan_groups_cnts,
+                total_unique_cnt,
                 progress_proxy,
+                dedup_tofs,
+                dedup_intensities,
             )
+
         return self.__class__(
             index=get_precumsums(unique_counts),
             counts=unique_counts,

@@ -4,11 +4,17 @@ import numpy.typing as npt
 
 import functools
 
+from abc import ABC
 from contextlib import contextmanager
 from pathlib import Path
 from time import time
 
 from dictodot import DotDict
+
+
+import json
+import numpy as np
+import os
 
 
 def get_memmapped_dotdict(
@@ -80,28 +86,66 @@ def flush_results(results: DotDict[str, npt.NDArray], verbose: bool = True) -> N
         arr.flush()
 
 
-class MemmappedArrays:
-    @functools.wraps(get_memmapped_dotdict)
-    def __init__(self, *args, verbose=True, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-        self.arrays = get_memmapped_dotdict(*self.args, **self.kwargs)
-        self.verbose = verbose
-
+class ArrayContext(ABC):
     def __enter__(self):
         return self.arrays
 
+    def exit_action(self) -> None:
+        """Optional action at the exit of the context."""
+        return None
+
     def __exit__(self, exc_type, exc_value, traceback):
-        start_time = time()
-        flush_results(self.arrays, verbose=self.verbose)
-        end_time = time()
-        if self.verbose:
-            print(f"Flushing took {round(end_time-start_time, 2)} seconds")
+        self.exit_action()
         if exc_type:
             print(f"An exception occurred: {exc_value}")
         return False  # return True to suppress exceptions
 
 
+class NoneField:
+    """A mock class returning only None whatever asked."""
+
+    def __getattr__(self, name):
+        return None
+
+    def __getitem__(self, key):
+        return None
+
+
+class NoneContext(ArrayContext):
+    """A mock context returning only None whatever asked."""
+
+    def __init__(self):
+        self.arrays = NoneField()
+
+
+class RamArrays(ArrayContext):
+    def __init__(
+        self,
+        column_to_type_and_shape: dict[str, tuple[type, int | tuple[int, ...]]],
+        *args,
+        **kwargs,
+    ):
+        self.arrays = {
+            col: np.empty(dtype=dtype, shape=shape)
+            for col, (dtype, shape) in column_to_type_and_shape.items()
+        }
+
+
+class MemmappedArrays(ArrayContext):
+    @functools.wraps(get_memmapped_dotdict)
+    def __init__(self, *args, verbose=True, **kwargs):
+        self.arrays = get_memmapped_dotdict(*args, **kwargs)
+        self.verbose = verbose
+
+    def exit_action(self):
+        start_time = time()
+        flush_results(self.arrays, verbose=self.verbose)
+        end_time = time()
+        if self.verbose:
+            print(f"Flushing took {round(end_time-start_time, 2)} seconds")
+
+
+# THIS IS NOT AS USEFUl AS THOUGH, BUT MUST STAY
 @contextmanager
 def IdentityContext(*args, **kwargs):
     """

@@ -57,8 +57,6 @@ precursor_dataset + fragment_dataset
 
 
 
-
-
 sorted_clusters_in_ram == sorted_clusters_on_drive
 
 ######################################################################
@@ -67,7 +65,36 @@ sorted_clusters_in_ram == sorted_clusters_on_drive
 sorted_clusters = LexSortedClusters.from_tofu("/tmp/test_blah.tofu")
 deduplicated_clusters = sorted_clusters.deduplicate() # TODO: missing memmapped equivalent.
 
-deduplicated_clusters.columns
+sorted_clusters.count_unique_frame_scan_tof_tuples()
+
+
+
+
+output_path = Path(output_path)
+output_path.mkdir(parents=True, exist_ok=force)
+size = np.sum(raw_data.frames["NumPeaks"][frames - 1])
+scheme = {col: (dtype, size) for col, dtype in satelite_data_dtypes.items()}
+scheme["counts"] = (
+    np.uint32,
+    (raw_data.max_frame + 1, raw_data.max_scan + 1),
+)
+with MemmappedArrays(
+    folder=output_path,
+    column_to_type_and_shape=scheme,
+    mode="w+",
+) as context:
+    raw_data.query(
+        frames,
+        columns={
+            col: arr for col, arr in context.items() if col != "counts"
+        },
+    )
+    raw_data.count_frame_scan_occurrences(
+        frames=frames_it, counts=context.counts
+    )
+return cls.from_tofu(output_path)
+
+
 
 
 

@@ -181,10 +181,12 @@ def count_unique_for_indexed_data(
     zz_lexsorted: npt.NDArray,
     counts: npt.NDArray,
     index: npt.NDArray,
+    unique_counts: npt.NDArray | None = None,
     progress_proxy: ProgressBar | None = None,
 ) -> npt.NDArray:
     """Count the number of unique (x,y,z) tuples in a sorted order with counts and index."""
-    unique_counts = zeros_copy(counts)
+    if unique_counts is None:
+        unique_counts = zeros_copy(counts)
     for x, y in zip(*counts.nonzero()):
         first_idx = index[x, y]
         last_idx = first_idx + counts[x, y]

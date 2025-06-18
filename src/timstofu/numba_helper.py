@@ -7,6 +7,13 @@ import pandas as pd
 
 
 @numba.njit
+def overwrite(xx, what_with=0):
+    for i in range(len(xx)):
+        xx[i] = what_with
+    return xx
+
+
+@numba.njit
 def _get_min_int_data_type(x, signed=True):
     if signed:
         if x <= 2**7 - 1:
