@@ -205,7 +205,7 @@ def _count_frame_scans(
     _frame_scan_to_count, *_ = count2D(frames, scans)
     frame_scan_to_count = _empty(
         name="counts",
-        dtype=_frame_scan_to_count.dtype.str,
+        dtype=_frame_scan_to_count.dtype,
         shape=_frame_scan_to_count.shape,
     )
     frame_scan_to_count[:] = _frame_scan_to_count
@@ -253,7 +253,7 @@ class LexSortedClusters(CompactDataset):
             columns={
                 c: write_orderly(
                     in_arr=v,
-                    out_arr=_empty(name=c, dtype=v.dtype.str, shape=v.shape),
+                    out_arr=_empty(name=c, dtype=v.dtype, shape=v.shape),
                     order=lex_order,
                 )
                 for c, v in dd.items()
@@ -309,19 +309,19 @@ class LexSortedClusters(CompactDataset):
             unique_counts=_zeros(
                 name="counts",
                 shape=self.counts.shape,
-                dtype=self.counts.dtype.str,
+                dtype=self.counts.dtype,
             )
         )
         total_unique_cnt = unique_counts.sum()  # the size of things.
         dedup_tofs = _empty(
             name="tof",
             shape=total_unique_cnt,
-            dtype=self.columns.tof.dtype.str,
+            dtype=self.columns.tof.dtype,
         )
         dedup_intensities = _zeros(
             name="intensity",
             shape=total_unique_cnt,
-            dtype=self.columns.intensity.dtype.str,
+            dtype=self.columns.intensity.dtype,
         )
         consecutive_frame_scan_groups_cnts = self.counts[self.counts > 0]
 
@@ -379,7 +379,7 @@ class LexSortedDataset(CompactDataset):
         return cls(
             counts=_count_frame_scans(dd.frame, dd.scan, _empty),
             columns={
-                c: copy(v, _empty(name=c, dtype=v.dtype.str, shape=v.shape))
+                c: copy(v, _empty(name=c, dtype=v.dtype, shape=v.shape))
                 for c, v in dd.items()
                 if c not in {"frame", "scan"}
             },
@@ -402,6 +402,7 @@ class LexSortedDataset(CompactDataset):
             satellite_data (list): What columns to get from .d folder?
         """
         assert level in ("precursor", "fragment", "both")
+
         raw_data = (
             folder_dot_d
             if isinstance(folder_dot_d, OpenTIMS)
@@ -436,7 +437,7 @@ class LexSortedDataset(CompactDataset):
                 columns={
                     c: _empty(
                         name=c,
-                        dtype=tdf_column_to_dtype[c].__name__,
+                        dtype=tdf_column_to_dtype[c],
                         shape=raw_data.peaks_per_frame_cnts(frames),
                     )
                     for c in satellite_data

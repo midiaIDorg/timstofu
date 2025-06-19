@@ -34,22 +34,3 @@ fragment_dataset = LexSortedDataset.from_tdf(
 )
 
 precursor_dataset + fragment_dataset
-
-# TODO: it would be nice to have a mechanism to make the decision about the memmapped serializer outside the function, to support mine and Michals when he does it.
-# Have it!
-
-from memmapped_tofu import MemmappedArrays
-from memmapped_tofu import RamArrays
-
-
-# no, we need a context that will make those instead! So exactly like MemmappedContext.
-Context = IdentityContext(
-    dedup_tofs=np.empty(
-        dtype=sorted_tofs.dtype,
-        shape=deduplicated_event_count,
-    ),
-    dedup_intensities=np.zeros(
-        dtype=sorted_intensities.dtype,
-        shape=deduplicated_event_count,
-    ),
-)

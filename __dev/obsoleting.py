@@ -18,13 +18,6 @@ import numpy as np
 import shutil
 
 
-dataset_dd = open_dataset_dct(
-    "/home/matteo/Projects/midia/midia_experiments/pipelines/devel/midia_pipe/tmp/datasets/memmapped/5/raw.d.cache"
-)
-df = dataset_df = open_dataset(
-    "/home/matteo/Projects/midia/midia_experiments/pipelines/devel/midia_pipe/tmp/datasets/memmapped/5/raw.d.cache"
-)
-
 path = Path("/home/matteo/tmp/test_tdf_map.tofu")
 shutil.rmtree(path)
 path.mkdir(parents=True)
@@ -56,10 +49,4 @@ import numpy as np
 _in = np.array([1, 2, 3, -4], dtype=np.int32)
 _out = np.empty(shape=_in.shape, dtype=np.uint32)
 copy(_in, _out)
-
-
-from opentimspy import column_to_dtype
-
-
-# TODO: clean all of timstofu.mappucion
 # TODO: look into addition again.
