@@ -30,7 +30,10 @@ from mmapuccino import empty
 clusters_path = "/home/matteo/tmp/test1.mmappet"  # real fragment clusters
 output_folder: str | Path | None = "/tmp/test_blah.tofu"
 shutil.rmtree(output_folder)
-sorted_clusters_in_ram = LexSortedClusters.from_df(df=open_dataset_dct(clusters_path))
+clusters = open_dataset_dct(clusters_path)
+sorted_clusters_in_ram = LexSortedClusters.from_df(df=clusters)
+sorted_clusters_in_ram.deduplicate()
+
 
 sorted_clusters = LexSortedClusters.from_tofu("/tmp/test.tofu")  # this is deduplicated.
 deduplicated_clusters_in_ram = (

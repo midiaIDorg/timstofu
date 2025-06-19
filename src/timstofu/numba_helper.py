@@ -178,6 +178,18 @@ def write_orderly(
     return out_arr
 
 
+@numba.njit
+def copy(
+    in_arr: npt.NDArray,
+    out_arr: npt.NDArray,
+) -> npt.NDArray:
+    """Write fron in_arr to out_arr using order."""
+    assert len(in_arr) == len(out_arr)
+    for i in range(len(in_arr)):
+        out_arr[i] = in_arr[i]
+    return out_arr
+
+
 @numba.njit(cache=True)
 def empty_copy(xx):
     return np.empty(dtype=xx.dtype, shape=xx.shape)
