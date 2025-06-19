@@ -407,13 +407,12 @@ class LexSortedDataset(CompactDataset):
             if isinstance(folder_dot_d, OpenTIMS)
             else OpenTIMS(folder_dot_d)
         )
-        match level:
-            case "precursor":
-                frames = raw_data.ms1_frames
-            case "fragment":
-                frames = raw_data.ms2_frames
-            case "both":
-                frames = raw_data.frames["Id"]
+
+        frames = dict(
+            precursor=raw_data.ms1_frames,
+            fragment=raw_data.ms2_frames,
+            both=raw_data.frames["Id"],
+        )[level]
 
         if "desc" not in tqdm_kwargs:
             tqdm_kwargs["desc"] = "Counting (frame,scan) pairs among events"
@@ -424,16 +423,22 @@ class LexSortedDataset(CompactDataset):
             counts=raw_data.count_frame_scan_occurrences(
                 frames=tqdm(frames, **tqdm_kwargs),
                 counts=_empty(
+                    name="counts",
                     shape=(
                         raw_data.max_frame + 1,
                         raw_data.max_scan + 1,
-                    )
+                    ),
+                    dtype="uint32",
                 ),
             ),
             columns=raw_data.query(
                 frames,
                 columns={
-                    c: _empty(name=c, dtype=tdf_column_to_dtype[c], shape=len(raw_data))
+                    c: _empty(
+                        name=c,
+                        dtype=tdf_column_to_dtype[c].__name__,
+                        shape=raw_data.peaks_per_frame_cnts(frames),
+                    )
                     for c in satellite_data
                 },
             ),

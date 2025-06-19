@@ -5,15 +5,17 @@
 from dictodot import DotDict
 from mmapped_df import open_dataset
 from mmapped_df import open_dataset_dct
+from pathlib import Path
 from timstofu.numba_helper import copy
 from timstofu.tofu import CompactDataset
 from timstofu.tofu import LexSortedDataset
 from timstofu.tofu import empty
 
+from mmapuccino import MmapedArrayValuedDict
+from opentimspy import OpenTIMS
 
 import numpy as np
-
-cd = CompactDataset(counts=np.array([[0, 0, 1], [1, 2, 0]]), columns=DotDict())
+import shutil
 
 
 dataset_dd = open_dataset_dct(
@@ -23,24 +25,27 @@ df = dataset_df = open_dataset(
     "/home/matteo/Projects/midia/midia_experiments/pipelines/devel/midia_pipe/tmp/datasets/memmapped/5/raw.d.cache"
 )
 
-_get_columns({c: dd[c] for c in dd if c not in {"frame", "scan"}})
+path = Path("/home/matteo/tmp/test_tdf_map.tofu")
+shutil.rmtree(path)
+path.mkdir(parents=True)
+md = MmapedArrayValuedDict(path)
+
+rawdata = OpenTIMS("/home/matteo/data_for_midiaID/F9477.d")
+precursor_dataset = LexSortedDataset.from_tdf(
+    folder_dot_d=rawdata,
+    level="precursor",
+    satellite_data=["tof", "intensity", "mz"],
+    _empty=md.empty,
+)
+md.data
 
 
-dd = DotDict(a=2)
-isinstance(dd, DotDict)
-isinstance({1: 3}, DotDict)
+tdf_column_to_dtype["tof"]
 
+from opentimspy import column_to_dtype as tdf_column_to_dtype
 
-from opentimspy import OpenTIMS
-from tqdm import tqdm
+np.uint32.__name__
 
-level = "precursor"
-folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"  # small data
-tqdm_kwargs = {}
-# precursor_dataset = LexSortedDataset.from_tdf(
-#     folder_dot_d=folder_dot_d,
-#     level="precursor",
-# )
 # fragment_dataset = LexSortedDataset.from_tdf(
 #     folder_dot_d=folder_dot_d,
 #     level="fragment",
@@ -56,4 +61,5 @@ copy(_in, _out)
 from opentimspy import column_to_dtype
 
 
-# TODO: clean all of timstofu.memmapped shit.
+# TODO: clean all of timstofu.mappucion
+# TODO: look into addition again.
