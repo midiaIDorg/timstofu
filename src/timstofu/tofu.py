@@ -31,10 +31,6 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-
-# START OBSOLETE
-from timstofu.memmapped_tofu import MemmappedArrays  # TODO: remove
-
 # END OBSOLETE
 
 
