@@ -10,6 +10,7 @@ from mmapuccino import empty
 from mmapuccino import zeros
 from numba_progress import ProgressBar
 from opentimspy import OpenTIMS
+from opentimspy import column_to_dtype as tdf_column_to_dtype
 from tqdm import tqdm
 
 from timstofu.numba_helper import add_matrices_with_potentially_different_shapes
@@ -295,6 +296,19 @@ class LexSortedClusters(CompactDataset):
         _empty: Callable = empty,
         _zeros: Callable = zeros,
     ) -> LexSortedDataset:
+        """
+        Deduplicate sorted clusters.
+
+        Parameters
+        ----------
+        ProgressBarKwargs (dict): All different kwargs for numba_progress.ProgressBar.
+        _empty (Callable): Allocator of empty space. Defaults to a wrapper around np.empty.
+        _zeros (Callable): Allocator of zero array. Defaults to a wrapper around np.zeros.
+
+        Returns
+        -------
+        LexSortedDataset: An equivalent of a TDF.
+        """
         unique_counts = self.count_unique_frame_scan_tof_tuples(
             unique_counts=_zeros(
                 name="counts",
@@ -380,23 +394,16 @@ class LexSortedDataset(CompactDataset):
         cls,
         folder_dot_d: str | Path | OpenTIMS,
         level: str = "both",
-        output_path: str | Path | None = None,
-        satellite_dtypes: dict[str, type] = dict(
-            tof=np.uint32,
-            intensity=np.uint32,
-        ),
+        satellite_data: list[str] = ["tof", "intensity"],
         tqdm_kwargs: dict[str, Any] = {},
-        force: bool = False,
-        mode: str = "r",
+        _empty: Callable = empty,
     ):
         """Create an instance of LexSortedDataset from a timsTOF .d folder.
 
         Arguments:
             folder_dot_d (str|OpenTIMS): Path to the .d folder.
             level (stre): What data to write: precursor, fragment, or both?
-            output_path (str): Optional folder to store memory-mapped arrays.
-            satellite_dtypes (dict): when provided output_path, what will the types be of each of the columns stored on disk?
-
+            satellite_data (list): What columns to get from .d folder?
         """
         assert level in ("precursor", "fragment", "both")
         raw_data = (
@@ -416,42 +423,25 @@ class LexSortedDataset(CompactDataset):
             tqdm_kwargs["desc"] = "Counting (frame,scan) pairs among events"
         if "total" not in tqdm_kwargs:
             tqdm_kwargs["total"] = len(frames)
-        frames_it = tqdm(frames, **tqdm_kwargs)
 
-        if output_path is None:
-            frame_scan_to_count = raw_data.count_frame_scan_occurrences(frames_it)
-            return cls(
-                index=get_precumsums(frame_scan_to_count),
-                counts=frame_scan_to_count,
-                columns=raw_data.query(
-                    frames,
-                    columns=list(satellite_dtypes),
+        return cls(
+            counts=raw_data.count_frame_scan_occurrences(
+                frames=tqdm(frames, **tqdm_kwargs),
+                counts=_empty(
+                    shape=(
+                        raw_data.max_frame + 1,
+                        raw_data.max_scan + 1,
+                    )
                 ),
-            )
-        else:
-            output_path = Path(output_path)
-            output_path.mkdir(parents=True, exist_ok=force)
-            size = np.sum(raw_data.frames["NumPeaks"][frames - 1])
-            scheme = {col: (dtype, size) for col, dtype in satellite_dtypes.items()}
-            scheme["counts"] = (
-                np.uint32,
-                (raw_data.max_frame + 1, raw_data.max_scan + 1),
-            )
-            with MemmappedArrays(
-                folder=output_path,
-                column_to_type_and_shape=scheme,
-                mode="w+",
-            ) as context:
-                raw_data.query(
-                    frames,
-                    columns={
-                        col: arr for col, arr in context.items() if col != "counts"
-                    },
-                )
-                raw_data.count_frame_scan_occurrences(
-                    frames=frames_it, counts=context.counts
-                )
-            return cls.from_tofu(output_path)
+            ),
+            columns=raw_data.query(
+                frames,
+                columns={
+                    c: _empty(name=c, dtype=tdf_column_to_dtype[c], shape=len(raw_data))
+                    for c in satellite_data
+                },
+            ),
+        )
 
     def to_tdf(self, path: str):
         raise NotImplementedError
