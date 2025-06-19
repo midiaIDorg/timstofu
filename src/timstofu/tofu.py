@@ -101,7 +101,6 @@ class CompactDataset:
     index: npt.NDArray | None = None
 
     def __post_init__(self):
-        assert len(self.columns) > 0
         if self.index is None:
             self.index = get_precumsums(self.counts)
         assert len(self.index.shape) == 2
@@ -112,6 +111,8 @@ class CompactDataset:
             assert len(first_arr) == len(arr)
 
     def __len__(self):
+        if len(self.columns) == 0:
+            return 0
         return len(next(iter(self.columns.values())))
 
     def __add__(self, other) -> CompactDataset:
@@ -135,6 +136,9 @@ class CompactDataset:
                 *other.columns.values(),
             )
 
+        # TODO: missing deduplication here, specific to certain classes.
+        # self.postprocess()?
+
         return self.__class__(
             index=index,
             counts=counts,
@@ -142,7 +146,7 @@ class CompactDataset:
         )
 
     def to_npz(self, output_path: str, compress: bool = True) -> None:
-        """Save to npz format."""
+        """Save to npz format (including columns)."""
         (np.savez_compressed if compress else np.savez)(
             file=output_path,
             index=self.index,
@@ -152,6 +156,7 @@ class CompactDataset:
 
     @classmethod
     def from_npz(cls, path: str):
+        """Read from npz format."""
         loaded = np.load(path)
         return cls(
             index=loaded["index"],
@@ -163,6 +168,7 @@ class CompactDataset:
 
     @classmethod
     def from_tofu(cls, folder: str | Path, mode="r", *args, **kwargs):
+        """Read from the .tofu memory mapped format."""
         dct = MmapedArrayValuedDict(folder=folder, mode=mode, *args, **kwargs)
         return cls(counts=dct.data.pop("counts"), columns=dct.data)
 
@@ -222,7 +228,9 @@ class LexSortedClusters(CompactDataset):
             shape=_frame_scan_to_count.shape,
         )
         frame_scan_to_count[:] = _frame_scan_to_count
-        lex_order = argcountsort3D(dd.frame, dd.scan, dd.tof)
+        lex_order, _, frame_scan_to_first_idx = argcountsort3D(
+            dd.frame, dd.scan, dd.tof, return_counts=True
+        )
 
         if paranoid:
             assert is_lex_nondecreasing(
@@ -231,8 +239,9 @@ class LexSortedClusters(CompactDataset):
 
         satelite_data_names = set(dd) - {"frame", "scan"}
         return (
-            LexSortedClusters(  # we could pass in index from argcountsort3D...
+            LexSortedClusters(
                 counts=frame_scan_to_count,
+                index=frame_scan_to_first_idx,
                 columns=DotDict(
                     {
                         c: write_orderly(
