@@ -202,15 +202,16 @@ class LexSortedClusters(CompactDataset):
     def from_df(
         cls,
         df: pd.DataFrame | dict[str, npt.NDArray],
-        output_folder: str | Path | None = None,
-        paranoid: bool = False,
+        return_order: bool = False,
+        _do_paranoid_checks: bool = False,
         _empty: Callable = empty,
-    ) -> tuple[CompactDataset, npt.NDArray]:
+    ) -> CompactDataset | tuple[CompactDataset, npt.NDArray]:
         """
         Arguments:
             df (pd.DataFrame): Opened data frame with ClusterID column.
             presort (bool): Presort clusters in (frame,scan) but not tof.
-            paranoid (bool): Do checks that inidicate a need to visit a psychiastrist and fast.
+            return_order: bool = False
+            _do_paranoid_checks (bool): Do checks that inidicate a need to visit a psychiastrist and fast.
             _empty (Callable): Allocator of empty space. Defaults to a wrapper around np.empty.
         """
         for col in ("frame", "scan", "tof", "intensity", "ClusterID"):
@@ -232,29 +233,29 @@ class LexSortedClusters(CompactDataset):
             dd.frame, dd.scan, dd.tof, return_counts=True
         )
 
-        if paranoid:
+        if _do_paranoid_checks:
             assert is_lex_nondecreasing(
                 dd.frame[lex_order], dd.scan[lex_order], dd.tof[lex_order]
             ), "We did not get a lexicographically sorted data."
 
         satelite_data_names = set(dd) - {"frame", "scan"}
-        return (
-            LexSortedClusters(
-                counts=frame_scan_to_count,
-                index=frame_scan_to_first_idx,
-                columns=DotDict(
-                    {
-                        c: write_orderly(
-                            dd[c],
-                            _empty(name=c, dtype=dd[c].dtype.str, shape=dd[c].shape),
-                            lex_order,
-                        )
-                        for c in satelite_data_names
-                    }
-                ),
+        sorted_clusters = LexSortedClusters(
+            counts=frame_scan_to_count,
+            index=frame_scan_to_first_idx,
+            columns=DotDict(
+                {
+                    c: write_orderly(
+                        in_arr=dd[c],
+                        out_arr=_empty(
+                            name=c, dtype=dd[c].dtype.str, shape=dd[c].shape
+                        ),
+                        order=lex_order,
+                    )
+                    for c in satelite_data_names
+                }
             ),
-            lex_order,
         )
+        return (sorted_clusters, lex_order) if return_order else sorted_clusters
 
     def count_unique_frame_scan_tof_tuples(
         self, unique_counts: npt.NDArray | None = None
