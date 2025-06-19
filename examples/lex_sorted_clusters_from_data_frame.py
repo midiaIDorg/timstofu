@@ -13,7 +13,7 @@ from timstofu.tofu import LexSortedClusters
 from mmapuccino import MmapedArrayValuedDict
 
 
-clusters_path = "/home/matteo/tmp/test1.mmappet"  # real fragment clusters
+clusters_path = "~/tmp/test1.mmappet"  # real fragment clusters
 df = open_dataset_dct(clusters_path)
 
 
@@ -26,7 +26,7 @@ sorted_clusters_in_ram, lex_order = LexSortedClusters.from_df(
 )
 # 5.36"
 
-memmaped_folder = Path("/home/matteo/tmp/test_sorted_clusters.tofu")
+memmaped_folder = Path("~/tmp/test_sorted_clusters.tofu")
 shutil.rmtree(memmaped_folder)
 
 %%time
@@ -40,3 +40,6 @@ sorted_clusters_on_disk, lex_order = LexSortedClusters.from_df(
 # 6.32" in /tmp, 7.18" on SSD.
 
 assert sorted_clusters_on_disk == sorted_clusters_in_ram
+
+
+print(md.data)
