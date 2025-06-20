@@ -76,7 +76,7 @@ minmax = functools.wraps(_minmax)(inputs_series_to_numpy(_minmax))
 
 
 @numba.njit
-def _count1D(xx: npt.NDArray) -> npt.NDArray:
+def _count1Dsparse(xx: npt.NDArray) -> npt.NDArray:
     """Count elements in an array of ints.
 
     Arguments:
@@ -93,6 +93,26 @@ def _count1D(xx: npt.NDArray) -> npt.NDArray:
         _counts[x - min_x] += 1
     _range = np.arange(min_x, max_x + 1)
     return _range, _counts
+
+
+count1Dsparse = functools.wraps(_count1Dsparse)(inputs_series_to_numpy(_count1Dsparse))
+
+
+@numba.njit
+def _count1D(xx: npt.NDArray, counts: npt.NDArray | None = None) -> npt.NDArray:
+    """Count elements in an array of ints.
+
+    Arguments:
+        xx: Array of ints.
+
+    Returns:
+        np.array: Counts.
+    """
+    if counts is None:
+        counts = np.zeros(shape=int(xx.max()) + 1, dtype=np.uint32)
+    for x in xx:
+        counts[x] += 1
+    return counts
 
 
 count1D = functools.wraps(_count1D)(inputs_series_to_numpy(_count1D))
@@ -126,6 +146,7 @@ def cumsum(xx):
     return np.cumsum(xx).reshape(xx.shape)
 
 
+# TODO: There should be one function. We should not use counts, but enlarge the index by 1 in every dim to make better use of RAM.
 @numba.njit
 def get_precumsums(counts: npt.NDArray) -> npt.NDArray:
     """
@@ -194,3 +215,43 @@ def count_unique_for_indexed_data(
         if progress_proxy is not None:
             progress_proxy.update(1)
     return unique_counts
+
+
+# TODO: There should be one function. We should not use counts, but enlarge the index by 1 in every dim to make better use of RAM.
+def get_index(counts: npt.NDArray) -> npt.NDArray:
+    """Turn counts into cumulated sums offset by one 0 at the beginning.
+
+    This function should be used to create an indexed view of elements in another table where elements are in groups and counts summarizes how many times they occur in those groups.
+    See test_get_index.
+
+    Arguments:
+        counts (npt.NDArray): An array of counts.
+
+    Returns:
+        np.array: A table with 0 and then cumulated counts.
+    """
+    index = np.empty(shape=len(counts) + 1, dtype=np.uint32)
+    index[0] = 0
+    np.cumsum(counts, out=index[1:])
+    return index
+
+
+@numba.njit(boundscheck=True)
+def max_intensity_in_window(xx, weights, radius, results):
+    n = len(xx)
+    left = 0
+    right = 0
+    for i in range(n):
+        # Move left pointer to ensure xx[i] - xx[left] <= radius
+        while left < n and xx[i] - xx[left] > radius:
+            left += 1
+        # Move right pointer to ensure xx[right] - xx[i] <= radius
+        while right < n and xx[right] - xx[i] <= radius:
+            right += 1
+
+        # Compute the max intensity in the current window [left, right)
+        max_val = weights[left]
+        for j in range(left + 1, right):
+            if weights[j] > max_val:
+                max_val = weights[j]
+        results[i] = max_val

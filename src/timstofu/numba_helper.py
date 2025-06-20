@@ -1,4 +1,5 @@
 import functools
+import itertools
 import numba
 
 import numpy as np
@@ -198,3 +199,89 @@ def empty_copy(xx):
 @numba.njit(cache=True)
 def zeros_copy(xx):
     return np.zeros(dtype=xx.dtype, shape=xx.shape)
+
+
+@numba.njit
+def melt(arr):
+    """
+    Converts a N-dimensional NumPy array (aka dense data) into coordinate and value vectors for non-zero elements (aka sparse data).
+
+    Parameters
+    ----------
+    arr : ndarray
+        An N-dimensional NumPy array.
+
+    Returns
+    -------
+    coords : tuple of 1D ndarrays
+        A tuple containing N arrays, each corresponding to the indices of non-zero elements
+        along one dimension of `arr`.
+
+    values : 1D ndarray
+        A 1D array of the non-zero values from `arr`, ordered according to their indices
+        in `coords`.
+
+    Notes
+    -----
+    This function mimics a "melt" operation, returning the coordinates and values
+    of all non-zero entries in the input array. It is JIT-compiled using Numba for performance.
+    """
+    nonzero = arr.nonzero()
+    values = np.empty(dtype=arr.dtype, shape=nonzero[0].shape)
+    for i, idx in enumerate(zip(*nonzero)):
+        values[i] = arr[idx]
+    return (*nonzero, values)
+
+
+def to_numpy(xx: npt.NDArray | pd.Series):
+    if isinstance(xx, pd.Series):
+        xx = xx.to_numpy()
+    return xx
+
+
+def numba_wrap(foo):
+    """Wrap function `foo` in all types of numba modes."""
+    return {
+        "python": foo,
+        **{
+            (
+                "safe" if boundscheck else "fast",
+                "multi_threaded" if parallel else "single_threaded",
+            ): functools.wraps(foo)(
+                numba.njit(boundscheck=boundscheck, parallel=parallel)(foo)
+            )
+            for boundscheck, parallel in itertools.product((True, False), repeat=2)
+        },
+    }
+
+
+@numba.njit
+def apply_argsort_inplace(xx, ii):
+    """Apply order on orbits (cycles) of the permutation `ii` in-place in `xx`.
+
+    Likely best to do it for tables already in RAM to assure random access.
+    """
+    n = len(xx)
+    visited = np.zeros(n, dtype=np.bool_)
+    for i in range(n):
+        if visited[i] or ii[i] == i:
+            continue
+        j = i
+        tmp = xx[i]
+        while True:
+            visited[j] = True
+            next_j = ii[j]
+            if next_j == i:
+                xx[j] = tmp
+                break
+            xx[j] = xx[next_j]
+            j = next_j
+    return xx
+
+
+def test_apply_argsort_inplace():
+    xx = np.random.permutation(1000)
+    yy = xx.copy()
+    ii = np.argsort(xx)
+    apply_argsort_inplace(yy, ii)
+    np.testing.assert_equal(yy, xx[ii])

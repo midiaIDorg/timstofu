@@ -11,7 +11,9 @@ from math import inf
 from mmapped_df import open_dataset
 from mmapped_df import open_dataset_dct
 from numba_progress import ProgressBar
+from opentimspy import OpenTIMS
 from pathlib import Path
+
 from timstofu.sort_and_pepper import argcountsort3D
 from timstofu.sort_and_pepper import is_lex_nondecreasing
 from timstofu.sort_and_pepper import lexargcountsort2D
@@ -24,6 +26,7 @@ from timstofu.tofu import LexSortedClusters
 from timstofu.tofu import LexSortedDataset
 
 
+folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
 precursor_dataset = LexSortedDataset.from_tdf(
     folder_dot_d=folder_dot_d,
     level="precursor",

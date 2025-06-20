@@ -16,6 +16,7 @@ from tqdm import tqdm
 from timstofu.numba_helper import add_matrices_with_potentially_different_shapes
 from timstofu.numba_helper import copy
 from timstofu.numba_helper import split_args_into_K
+from timstofu.numba_helper import to_numpy
 from timstofu.numba_helper import write_orderly
 
 from timstofu.sort_and_pepper import argcountsort3D
@@ -25,6 +26,8 @@ from timstofu.sort_and_pepper import is_lex_nondecreasing
 from timstofu.stats import count2D
 from timstofu.stats import count_unique_for_indexed_data
 from timstofu.stats import get_precumsums
+
+from timstofu.misc import is_data_dict
 
 import numba
 import numpy as np
@@ -359,29 +362,46 @@ class LexSortedDataset(CompactDataset):
     @classmethod
     def from_df(
         cls,
-        df: pd.DataFrame | dict[str, npt.NDArray],
-        _empty=empty,
-        _zeros=zeros,  # for now not used...
+        df: pd.DataFrame | dict[str, npt.NDArray] | DotDict[str, npt.NDArray],
+        _empty: Callable = empty,
+        _indexing_columns: tuple[str, str] = ("frame", "scan"),
+        _satellite_columns: tuple[str, ...] = ("tof", "intensity"),
     ) -> CompactDataset:
         """
         Arguments:
-            df (pd.DataFrame | dict): A data frame with TDF content (likely from .startrek mmapped format).
+            df (pd.DataFrame | dict): A data frame with TDF content (likely from .startrek mmapped format), or an equivalent data structure (dict mapping columns to equally sized numpy arrays).
         """
-        dd = DotDict(
-            df if isinstance(df, dict) else {c: df[c].to_numpy(copy=False) for c in df}
-        )
-        for col in ("frame", "scan", "tof", "intensity"):
-            assert col in dd
         assert (
-            "ClusterID" not in dd
+            "ClusterID" not in df
         ), "For representing Clusters, please use `SortedClusters.from_df`."
+        assert (
+            len(_indexing_columns) == 2
+        ), "`_indexing_columns` must consist of 2 int or uint based columns."
+        for col in _indexing_columns:
+            assert col in ("frame", "scan", "tof", "intensity")
+        for col in _satellite_columns:
+            assert col in tdf_column_to_dtype
+
+        if not isinstance(df, DotDict):
+            if not isinstance(df, pd.DataFrame):
+                assert is_data_dict(df)
+            df = DotDict(
+                {
+                    c: to_numpy(df[c])
+                    for c in set(_indexing_columns) | set(_satellite_columns)
+                }
+            )
 
         return cls(
-            counts=_count_frame_scans(dd.frame, dd.scan, _empty),
+            counts=_count_frame_scans(
+                df[_indexing_columns[0]],
+                df[_indexing_columns[1]],
+                _empty,
+            ),
             columns={
                 c: copy(v, _empty(name=c, dtype=v.dtype, shape=v.shape))
-                for c, v in dd.items()
-                if c not in {"frame", "scan"}
+                for c, v in df.items()
+                if c not in _indexing_columns
             },
         )
 
@@ -390,16 +410,17 @@ class LexSortedDataset(CompactDataset):
         cls,
         folder_dot_d: str | Path | OpenTIMS,
         level: str = "both",
-        satellite_data: list[str] = ["tof", "intensity"],
         tqdm_kwargs: dict[str, Any] = {},
+        _satellite_data: tuple[str] = ("tof", "intensity"),
         _empty: Callable = empty,
+        _zeros: Callable = zeros,
     ):
         """Create an instance of LexSortedDataset from a timsTOF .d folder.
 
         Arguments:
             folder_dot_d (str|OpenTIMS): Path to the .d folder.
             level (stre): What data to write: precursor, fragment, or both?
-            satellite_data (list): What columns to get from .d folder?
+            _satellite_data (list): What columns to get from .d folder?
         """
         assert level in ("precursor", "fragment", "both")
 
@@ -423,7 +444,7 @@ class LexSortedDataset(CompactDataset):
         return cls(
             counts=raw_data.count_frame_scan_occurrences(
                 frames=tqdm(frames, **tqdm_kwargs),
-                counts=_empty(
+                counts=_zeros(
                     name="counts",
                     shape=(
                         raw_data.max_frame + 1,
@@ -440,7 +461,7 @@ class LexSortedDataset(CompactDataset):
                         dtype=tdf_column_to_dtype[c],
                         shape=raw_data.peaks_per_frame_cnts(frames),
                     )
-                    for c in satellite_data
+                    for c in _satellite_data
                 },
             ),
         )

@@ -7,6 +7,7 @@ import pandas as pd
 from numba_progress import ProgressBar
 
 from timstofu.numba_helper import inputs_series_to_numpy
+from timstofu.numba_helper import numba_wrap
 from timstofu.stats import _count_unique
 from timstofu.stats import count2D
 from timstofu.stats import count_unique_for_indexed_data
@@ -261,10 +262,12 @@ def lexargcountsort2D_to_3D(
         s = xy_to_first_idx[x, y]
         e = s + xy_to_count[x, y]
         order_z_between_s_and_e = np.argsort(xy_presorted_zz[s:e])
+        # this is not stable!!! so what?
         xy_to_xyz_order[s:e] = xy_order[s:e][order_z_between_s_and_e]
     return xy_to_xyz_order
 
 
+# TODO: make it possible to use user allocated arrays for results
 @inputs_series_to_numpy
 def argcountsort3D(
     xx: npt.NDArray | pd.Series,
@@ -345,3 +348,106 @@ def test_count_unique_for_indexed_data():
     )
     expected_res = set(map(mega_cast(int), zip(xx, yy)))
     assert res == expected_res
+
+
+@numba.njit
+def rank_array(order):
+    ranks = np.empty(len(order), dtype=np.int32)
+    for rank, i in enumerate(order):
+        ranks[i] = rank
+    return ranks
+
+
+def _grouped_argsort(xx, group_index, order=None):
+    """Sort xx in groups
+
+    Parameters
+    ----------
+    xx (np.array): to be argsorted, grouped by index.
+    grouped_index (np.array): 1D array with counts, one field larger than the number of different values of the grouper.
+
+    Notes
+    -----
+    `group_index[i]:group_index[i+1]` returns a view into all members of the i-th group.
+    """
+    if order is None:
+        order = np.empty(len(xx), dtype=np.uint32)
+    for i in numba.prange(len(group_index) - 1):
+        s = group_index[i]
+        e = group_index[i + 1]
+        order[s:e] = s + np.argsort(xx[s:e])
+    return order
+
+
+grouped_argsorts = numba_wrap(_grouped_argsort)
+grouped_argsort = grouped_argsorts["safe", "multi_threaded"]
+
+
+@numba.njit
+def make_idx(arrays, maxes, res):
+    """
+    Combines multiple integer arrays into a single unique index per row using Horner's method.
+
+    This function encodes N-dimensional integer coordinates into a single integer index,
+    similar to row-major flattening of a multi-dimensional array. It assumes that for each
+    dimension `j`, values in `arrays[j]` are in the range `[0, maxes[j])`.
+
+    Parameters
+    ----------
+    arrays : list of 1D arrays of int
+        A list of arrays, each of length `M`, representing values along each dimension.
+        Each `arrays[j][i]` corresponds to the j-th coordinate of the i-th element.
+    maxes : 1D array of int
+        The maximum value (exclusive upper bound) for each dimension. Used as the radix
+        in Horner’s method for flattening.
+    res : 1D array of int
+        Output array of length `M`, where the resulting single indices will be stored.
+
+    Returns
+    -------
+    res : 1D array of int
+        The same array passed in as `res`, containing the combined indices.
+
+    Notes
+    -----
+    This is equivalent to computing:
+
+        res[i] = arrays[0][i] * (maxes[1] * maxes[2] * ...) +
+                 arrays[1][i] * (maxes[2] * ...) + ... +
+                 arrays[N-1][i]
+
+    which uniquely encodes each N-dimensional index into a flat integer.
+    """
+    for i in range(len(arrays[0])):
+        res[i] = 0
+        for j in range(len(arrays)):
+            res[i] *= maxes[j]
+            res[i] += arrays[j][i]
+    return res
+
+
+@numba.njit(boundscheck=True)
+def lexargcountsort(
+    xx: npt.NDArray,
+    xx_cumsum: npt.NDArray,
+    order: npt.NDArray | None = None,
+    copy_cumsum: bool = True,
+):
+    """Get the order sorting xx by values in group_index."""
+    assert len(xx.shape) == 1
+    assert xx_cumsum[-1] == len(xx)
+    if order is None:
+        order = np.empty(
+            dtype=np.uint32,
+            shape=xx.shape,
+        )
+    xx_cumsum = xx_cumsum.copy() if copy_cumsum else xx_cumsum
+    # going backwards preserves input order in (frame,scan) groups
+    for i in range(len(xx) - 1, -1, -1):
+        x = xx[i]
+        xx_cumsum[x] -= np.uint32(1)  # !!! uint-int->float in numpy !!!
+        j = xx_cumsum[x]
+        assert j >= 0, "Circular boom!!!"
+        assert j < len(xx), "idx beyond scope"
+        order[j] = i
+    return order
