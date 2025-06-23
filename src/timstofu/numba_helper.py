@@ -256,21 +256,33 @@ def numba_wrap(foo):
 
 
 @numba.njit
-def apply_argsort_inplace(xx, ii):
-    """Apply order on orbits (cycles) of the permutation `ii` in-place in `xx`.
+def permute_inplace(xx, permutation):
+    """Apply order on orbits (cycles) of the permutation `permutation` in-place in `xx`.
 
     Likely best to do it for tables already in RAM to assure random access.
+
+    Parameters
+    ----------
+    xx (np.array): Array to permutate.
+    permutation (np.array): Permutation of indices to apply.
+
+    Returns
+    -------
+
+    np.array: Reference to the `xx` input (piping-friendliness).
     """
-    n = len(xx)
-    visited = np.zeros(n, dtype=np.bool_)
-    for i in range(n):
-        if visited[i] or ii[i] == i:
+    assert len(xx) == len(
+        permutation
+    ), "Cannot apply a `permutation` if `xx` has different length."
+    visited = np.zeros(len(xx), dtype=np.bool_)
+    for i in range(len(xx)):
+        if visited[i] or permutation[i] == i:
             continue
         j = i
         tmp = xx[i]
         while True:
             visited[j] = True
-            next_j = ii[j]
+            next_j = permutation[j]
             if next_j == i:
                 xx[j] = tmp
                 break
@@ -279,9 +291,9 @@ def apply_argsort_inplace(xx, ii):
     return xx
 
 
-def test_apply_argsort_inplace():
+def test_permute_inplace():
     xx = np.random.permutation(1000)
     yy = xx.copy()
-    ii = np.argsort(xx)
-    apply_argsort_inplace(yy, ii)
-    np.testing.assert_equal(yy, xx[ii])
+    permutation = np.argsort(xx)
+    permute_inplace(yy, permutation)
+    np.testing.assert_equal(yy, xx[permutation])

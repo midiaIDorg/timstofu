@@ -19,9 +19,9 @@ from opentimspy import OpenTIMS
 
 from dictodot import DotDict
 from pathlib import Path
-from timstofu.numba_helper import apply_argsort_inplace
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import melt
+from timstofu.numba_helper import permute_inplace
 from timstofu.sort_and_pepper import is_lex_nondecreasing
 from timstofu.tofu import LexSortedDataset
 
@@ -42,9 +42,6 @@ grouped_argsort = grouped_argsorts[("safe", "multi_threaded")]
 
 folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
 raw_data = OpenTIMS(folder_dot_d)
-
-# makes more sense to do it per frame to avoid RAM usage, but just for test
-# this can be read in one after another.
 
 # rd1 = pd.DataFrame(
 #     raw_data.query(1, columns=("frame", "scan", "tof", "intensity")), copy=False
@@ -83,9 +80,9 @@ tofs_scans = make_idx(
 frame_tof_scan_order = grouped_argsort(tofs_scans, frame_index)  # need to test it too
 
 
-apply_argsort_inplace(scans, frame_tof_scan_order)  # reorders at small RAM price
-apply_argsort_inplace(tofs, frame_tof_scan_order)  # reorders at small RAM price
-apply_argsort_inplace(intensities, frame_tof_scan_order)  # reorders at small RAM price
+permute_inplace(scans, frame_tof_scan_order)  # reorders at small RAM price
+permute_inplace(tofs, frame_tof_scan_order)  # reorders at small RAM price
+permute_inplace(intensities, frame_tof_scan_order)  # reorders at small RAM price
 if paranoid:
     assert is_lex_nondecreasing(frames, tofs, scans)  # huzzzaah!
 
@@ -115,7 +112,7 @@ def max_intensity_in_window(results, xx, weights, radius):
 
 
 # @numba.njit(boundscheck=True) # 3.95"
-@numba.njit(boundscheck=True, parallel=True) # 0.5"
+@numba.njit(boundscheck=True, parallel=True)  # 0.5"
 def apply(
     group_index, yy, zz, weights, radius, results, unique_yy, progress_proxy=None
 ):
@@ -136,7 +133,7 @@ def apply(
             if progress_proxy is not None:
                 progress_proxy.update(1)
 
-%%timeit
+
 max_intensities = np.empty(dtype=intensities.dtype, shape=intensities.shape)
 unique_tofs_per_frame = np.zeros(dtype=np.uint32, shape=len(frame_index) - 1)
 apply(
@@ -151,11 +148,13 @@ apply(
 
 np.sum(max_intensities == intensities)  # still a bit on the small side.
 
-unique_max_intensities, max_intensity_counts = np.unique(max_intensities, return_counts=True)
+unique_max_intensities, max_intensity_counts = np.unique(
+    max_intensities, return_counts=True
+)
 plt.plot(unique_max_intensities[1:], max_intensity_counts[1:])
 plt.xlabel("max intensity")
 plt.ylabel("count")
-plt.yscale('log')
+plt.yscale("log")
 plt.show()
 
 
