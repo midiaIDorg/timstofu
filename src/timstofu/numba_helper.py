@@ -315,7 +315,7 @@ def test_permute_inplace():
 @numba.njit(boundscheck=True, parallel=True)
 def map_onto_lexsorted_indexed_data(
     xx_index: npt.NDArray,
-    yy_grouped_by_xx: npt.NDArray,
+    yy_by_xx: npt.NDArray,
     foo,
     foo_args,
     progress_proxy: ProgressBar | None = None,
@@ -328,17 +328,19 @@ def map_onto_lexsorted_indexed_data(
     `foo` must be
     """
     unique_y_per_x = np.zeros(shape=len(xx_index) - 1, dtype=np.uint32)
-    for x_idx in numba.prange(len(xx_index) - 1):
-        x_s = xx_index[x_idx]
-        x_e = xx_index[x_idx + 1]
-        s = x_s
-        for e in range(x_s + 1, x_e):
-            y_e = yy_grouped_by_xx[e]
-            y_s = yy_grouped_by_xx[s]
-            if y_e != y_s:
-                foo(s, e, *foo_args)
-                s = e
-                unique_y_per_x[x_idx] += 1
+    for i in numba.prange(len(xx_index) - 1):
+        j_s = xx_index[i]
+        j_e = xx_index[i + 1]
+        j_prev = j_s
+        y_prev = yy_by_xx[j_prev]
+        for j in range(j_s + 1, j_e):
+            y = yy_by_xx[j]
+            if y != y_prev:
+                unique_y_per_x[i] += 1
+                foo(j_prev, j, *foo_args)
+                y_prev = y
+                j_prev = j
+        foo(j_prev, j_e, *foo_args)
         if progress_proxy is not None:
             progress_proxy.update(1)
     return unique_y_per_x

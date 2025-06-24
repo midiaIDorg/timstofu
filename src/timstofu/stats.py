@@ -273,11 +273,19 @@ def test_get_index():
 
 
 @numba.njit(boundscheck=True)
-def get_window_borders(i, xx, radius, left=0, right=0):
+def get_window_borders(
+    i: int,
+    i_max: int,
+    xx: npt.NDArray,
+    radius: int,
+    left: int = 0,
+    right: int = 0,
+):
     """
     Parameters
     ----------
     i (int): Current index in xx.
+    i_max (int): The max value of i+j can take (necessary not to go into another group in xx).
     xx (np.array): A sorted array (non-decrasing).
     left (int): Currently explored left end.
     right (int): Currently explored right end.
@@ -287,14 +295,14 @@ def get_window_borders(i, xx, radius, left=0, right=0):
     -------
     tuple: updated values of left and right.
     """
-    N = len(xx)
     x = xx[i]
     # Move left pointer to ensure xx[i] - xx[left] <= radius
-    while left < N and radius + xx[left] < x:
+    while left < i and xx[left] + radius < x:
         left += 1
     right = max(i, right)
+    max_right = min(i_max, i + radius)
     # Move right pointer to ensure xx[right] - xx[i] <= radius
-    while right < N and xx[right] <= x + radius:
+    while right < max_right and xx[right] <= x + radius:
         right += 1
     return left, right
 
