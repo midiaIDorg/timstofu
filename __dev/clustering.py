@@ -20,6 +20,7 @@ from opentimspy import OpenTIMS
 
 from dictodot import DotDict
 from pathlib import Path
+from timstofu.numba_helper import decount
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import is_arange
 from timstofu.numba_helper import is_permutation
@@ -27,10 +28,9 @@ from timstofu.numba_helper import map_onto_lexsorted_indexed_data
 from timstofu.numba_helper import melt
 from timstofu.numba_helper import permute_inplace
 from timstofu.sort_and_pepper import is_lex_nondecreasing
-from timstofu.tofu import LexSortedDataset
 
 from mmapuccino import empty
-from timstofu.sort_and_pepper import rank_array
+from timstofu.sort_and_pepper import rank
 from timstofu.stats import count1D
 from timstofu.stats import count2D
 from timstofu.stats import cumsum
@@ -44,25 +44,72 @@ from tqdm import tqdm
 from timstofu.numba_helper import test_foo_for_map_onto_lexsorted_indexed_data
 from timstofu.sort_and_pepper import grouped_lexargcountsort
 
-folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
-raw_data = OpenTIMS(folder_dot_d)
+from timstofu.tofu import LexSortedClusters
+from timstofu.tofu import LexSortedDataset
 
-# rd1 = pd.DataFrame(
-#     raw_data.query(1, columns=("frame", "scan", "tof", "intensity")), copy=False
-# )
-# rd1.sort_values(["frame","tof","scan"])
-# Counter(rd1.groupby(["frame","tof"]).size())
-chosen_frames = raw_data.ms1_frames
+from mmapuccino import MmapedArrayValuedDict
+from pathlib import Path
+from shutil import rmtree
 
-# do we need frames at the beginning? nope. others yes, sort of.
-cols = raw_data.query(chosen_frames, columns=("frame", "scan", "tof", "intensity"))
-frames, scans, tofs, intensities = cols.values()
-frame_max, scan_max, tof_max, intensity_max = (
-    v.max() + 1 for col, v in cols.items()
-)  # +1 needed to not go out of scope
+
+SIMULATED = FALSE
+
+if SIMULATED:
+    simulated_precursors_path = Path("/home/matteo/tmp/simulated_precursors.mmappet")
+    try:
+        simulated_precursors = LexSortedDataset.from_tofu(simulated_precursors_path)
+    except Exception:
+        simulated_sorted_clusters_path = Path(
+            "/home/matteo/tmp/simulated_sorted_clusters.mmappet"
+        )
+        # rmtree(simulated_sorted_clusters_path)
+        simulated_sorted_clusters_path.mkdir(parents=True)
+
+        # rmtree(simulated_precursors_path)
+        simulated_precursors_path.mkdir(parents=True)
+
+        mmap_sorted_clusters = MmapedArrayValuedDict(simulated_sorted_clusters_path)
+        mmap_simulated_precursors = MmapedArrayValuedDict(simulated_precursors_path)
+        sorted_clusters = LexSortedClusters.from_df(
+            df=open_dataset_dct("/home/matteo/tmp/test1.mmappet"),
+            _empty=mmap_sorted_clusters.empty,
+        )
+        simulated_precursors = sorted_clusters.deduplicate(
+            _empty=mmap_simulated_precursors.empty,
+            _zeros=mmap_simulated_precursors.zeros,
+        )
+
+        frames, scans, frame_scan_to_count = melt(simulated_precursors.counts)
+        # somewhere the data gets different!
+        # TODO: this breaks:
+        assert frame_scan_to_count.sum() == len(sorted_clusters)
+        # NEED TO SOLVE THIS ISSUE.
+
+        frames = decount(frames.astype(np.uint32), frame_scan_to_count)
+        scans = decount(scans.astype(np.uint32), frame_scan_to_count)
+        tofs = sorted_clusters.columns.tof
+        intensities = sorted_clusters.columns.intensity
+
+        frame_counts = count1D(frames)
+else:
+    folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
+    raw_data = OpenTIMS(folder_dot_d)
+    chosen_frames = raw_data.ms1_frames
+
+    # do we need frames at the beginning? nope. others yes, sort of.
+    cols = raw_data.query(chosen_frames, columns=("frame", "scan", "tof", "intensity"))
+    frames, scans, tofs, intensities = cols.values()
+    frame_counts = raw_data.frames["NumPeaks"][chosen_frames - 1]
+
+
+frame_max, scan_max, tof_max, intensity_max = map(
+    lambda v: v.max() + 1, (frames, scans, tofs, intensities)
+)
+# +1 needed to not go out of scope
+
+
 paranoid: bool = False
 
-frame_counts = raw_data.frames["NumPeaks"][chosen_frames - 1]
 frame_index = get_index(frame_counts)
 event_count = frame_index[-1]
 if paranoid:
@@ -140,15 +187,20 @@ def test():
 
 
 @numba.njit(boundscheck=True)
-def find_bounds(xx, s, e, i, x_min):
-    i = np.int64(i)
-    # Search left
+def neighbors_above_threshold_left_and_right(
+    intensities,
+    s,
+    e,
+    i,
+    min_fraction_of_intensity=0,
+):
+    i = np.intp(i)
     left = i
-    while left >= s and xx[left] <= x_min:
+    min_intensity = min_fraction_of_intensity * intensities[i]
+    while left >= s and intensities[left] > min_intensity:
         left -= 1
-    # Search right
     right = i
-    while right <= e and xx[right] <= x_min:
+    while right <= e and intensities[right] > min_intensity:
         right += 1
     # Clamp to boundaries
     left = max(left, s)
@@ -157,35 +209,51 @@ def find_bounds(xx, s, e, i, x_min):
 
 
 @numba.njit
+def get_total_ion_current(intensities, left, right):
+    tic = 0
+    for i in range(left, right):
+        tic += intensities[i]
+    return tic
+
+
+@numba.njit
 def foo2(
     s,
     e,
     zz,
+    intensities,
     radius,
     zz_total_span,
     event_count,
     total_ion_current,
     is_max,
-    left_nonzero,
-    right_nonzero,
+    left_direct,
+    right_direct,
+    min_fraction_of_intensity,
 ):
     left = s
     right = s
     for i in range(s, e):
         zz_total_span[i] = e - s
-        # zz sorted -> can update left and right
+        # zz sorted -> can update left and right at will without errors
         left, right = get_window_borders(i, e, zz, radius, left, right)
         event_count[i] = right - left
-        total_ion_current[i] = intensities[left:right].sum()
+        total_ion_current[i] = get_total_ion_current(intensities, left, right)
         is_max[i] = max_around(intensities, i, left, right) == intensities[i]
+        left_direct[i], right_direct[i] = neighbors_above_threshold_left_and_right(
+            intensities, left, right, i, min_fraction_of_intensity
+        )
 
 
 scan_neighborhood_size = 100
+min_fraction_of_intensity = 0.5
 
 zz_total_span = np.zeros(dtype=np.uint32, shape=len(scans))
 event_count = np.zeros(dtype=np.uint32, shape=len(scans))
 total_ion_current = np.zeros(dtype=np.uint32, shape=len(scans))
 is_max = np.zeros(dtype=np.bool_, shape=len(scans))
+left_direct = np.zeros(dtype=np.uint32, shape=len(scans))
+right_direct = np.zeros(dtype=np.uint32, shape=len(scans))
 with ProgressBar(total=len(frame_index) - 1, desc="Getting stats") as progress_proxy:
     unique_tofs_per_frame = map_onto_lexsorted_indexed_data(
         frame_index,
@@ -193,14 +261,19 @@ with ProgressBar(total=len(frame_index) - 1, desc="Getting stats") as progress_p
         foo2,
         (  # foo args
             scans,
+            intensities,
             100,
             zz_total_span,
             event_count,
             total_ion_current,
             is_max,
+            left_direct,
+            right_direct,
+            min_fraction_of_intensity,
         ),  # foo args
         progress_proxy,
     )
+
 
 event_count_size, event_count_cnt = np.unique(event_count, return_counts=True)
 
@@ -224,27 +297,53 @@ plt.show()
 
 np.sum(is_max)
 
+consecutive_size = right_direct - left_direct
+consecutive_sizes, consecutive_sizes_cnt = np.unique(
+    consecutive_size, return_counts=True
+)
+plt.scatter(event_count_size, event_count_cnt, label="nonzero events")
+plt.scatter(
+    consecutive_sizes, consecutive_sizes_cnt, label="consecutive nonzero events"
+)
+# plt.xscale("log")
+plt.xlabel("SIZE IN SCAN DIM")
+plt.yscale("log")
+plt.ylabel("COUNT")
+plt.legend()
+plt.show()
 
+
+tof_counts = count1D(tofs)
+tof_index = get_index(tof_counts)
 tof_scan_frame_order = grouped_lexargcountsort(
-    arrays=(tofs, scans),
-    group_index=frame_index,
-    array_maxes=(tof_max, scan_max),
+    arrays=(scans, frames),
+    group_index=tof_index,
+    array_maxes=(scan_max, frame_max),
     # order=?, RAM OPTIMIZATION POSSIBILITY?
 )
 if paranoid:
-    assert is_permutation(frame_tof_scan_order)
+    assert is_permutation(tof_scan_frame_order)
 
+
+tof_scan_frame_to_frame_tof_scan_perm = rank(
+    tof_scan_frame_order
+)  # can give array now too for RAM savings.
 
 # reorder arrays at small RAM price, but only once.
-_visited = permute_inplace(scans, frame_tof_scan_order)
+_visited = permute_inplace(scans, tof_scan_frame_order, visited=_visited)
 if paranoid:
     np.all(_visited)
-_visited = permute_inplace(tofs, frame_tof_scan_order, visited=_visited)
+_visited = permute_inplace(tofs, tof_scan_frame_order, visited=_visited)
 if paranoid:
     np.all(_visited)
-_visited = permute_inplace(intensities, frame_tof_scan_order, visited=_visited)
+_visited = permute_inplace(intensities, tof_scan_frame_order, visited=_visited)
 if paranoid:
     np.all(_visited)
 
 if paranoid:
     assert is_lex_nondecreasing(frames, tofs, scans)  # huzzzaah! sorted
+
+
+# problem: we will need to likely try to extend the dims by one observation to each scan and frame
+
+# problem: how to actually choose the peak tops?

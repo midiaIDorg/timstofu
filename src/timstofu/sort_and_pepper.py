@@ -352,11 +352,21 @@ def test_count_unique_for_indexed_data():
 
 
 @numba.njit
-def rank_array(order):
-    ranks = np.empty(len(order), dtype=np.int32)
+def rank(order, ranks: npt.NDArray | None = None):
+    if ranks is None:
+        ranks = np.empty(len(order), dtype=np.int32)
+    assert len(ranks) == len(order)
     for rank, i in enumerate(order):
         ranks[i] = rank
     return ranks
+
+
+def test_rank():
+    xx = np.random.permutation(1000)
+    order = np.argsort(xx)
+    expected = np.argsort(order)
+    obtained = rank_array(order)
+    np.testing.assert_equal(expected, obtained)
 
 
 def _grouped_argsort(xx, group_index, order=None):

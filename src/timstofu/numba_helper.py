@@ -239,6 +239,18 @@ def melt(arr):
     return (*nonzero, values)
 
 
+@numba.njit
+def decount(xx, counts):
+    """Opposite to melt for 1D data."""
+    res = np.empty(shape=np.sum(counts), dtype=xx.dtype)
+    i = 0
+    for x, cnt in zip(xx, counts):
+        for _ in range(cnt):
+            res[i] = x
+            i += 1
+    return res
+
+
 def to_numpy(xx: npt.NDArray | pd.Series):
     if isinstance(xx, pd.Series):
         xx = xx.to_numpy()
