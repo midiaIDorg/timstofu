@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import functools
 import itertools
 import numba
@@ -5,6 +6,8 @@ import numba
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+
+from numba_progress import ProgressBar
 
 
 @numba.njit
@@ -36,6 +39,9 @@ def _get_min_int_data_type(x, signed=True):
             return 64
 
 
+np_uints = (np.uint8, np.uint16, np.uint32, np.uint64)
+
+
 def get_min_int_data_type(x, signed: bool = True):
     """
     Determine the minimal integer type code required to represent a given value.
@@ -53,15 +59,15 @@ def get_min_int_data_type(x, signed: bool = True):
         An integer code representing the minimal data type required:
 
         - If `signed` is False:
-            - 0 → np.uint8
-            - 1 → np.uint16
-            - 2 → np.uint32
-            - 3 → np.uint64
+            - 0 : np.uint8
+            - 1 : np.uint16
+            - 2 : np.uint32
+            - 3 : np.uint64
         - If `signed` is True:
-            - 0 → np.int8
-            - 1 → np.int16
-            - 2 → np.int32
-            - 3 → np.int64
+            - 0 : np.int8
+            - 1 : np.int16
+            - 2 : np.int32
+            - 3 : np.int64
 
     Notes
     -----
@@ -256,7 +262,7 @@ def numba_wrap(foo):
 
 
 @numba.njit
-def permute_inplace(xx, permutation):
+def permute_inplace(xx, permutation, visited=None):
     """Apply order on orbits (cycles) of the permutation `permutation` in-place in `xx`.
 
     Likely best to do it for tables already in RAM to assure random access.
@@ -274,26 +280,106 @@ def permute_inplace(xx, permutation):
     assert len(xx) == len(
         permutation
     ), "Cannot apply a `permutation` if `xx` has different length."
-    visited = np.zeros(len(xx), dtype=np.bool_)
+    if visited is None:
+        visited = np.zeros(len(xx), dtype=np.bool_)
+    else:
+        visited[:] = False
     for i in range(len(xx)):
-        if visited[i] or permutation[i] == i:
+        if visited[i]:
+            continue
+        if permutation[i] == i:
+            visited[i] = True
             continue
         j = i
         tmp = xx[i]
         while True:
             visited[j] = True
             next_j = permutation[j]
-            if next_j == i:
+            if next_j == i:  # cycle finished
                 xx[j] = tmp
                 break
             xx[j] = xx[next_j]
             j = next_j
-    return xx
+    return visited
 
 
 def test_permute_inplace():
     xx = np.random.permutation(1000)
     yy = xx.copy()
     permutation = np.argsort(xx)
-    permute_inplace(yy, permutation)
+    _visited = permute_inplace(yy, permutation)
+    assert np.all(_visited)
     np.testing.assert_equal(yy, xx[permutation])
+
+
+@numba.njit(boundscheck=True, parallel=True)
+def map_onto_lexsorted_indexed_data(
+    xx_index: npt.NDArray,
+    yy_grouped_by_xx: npt.NDArray,
+    foo,
+    foo_args,
+    progress_proxy: ProgressBar | None = None,
+) -> npt.NDArray:
+    """Here we iterate over indexed xx but in groups by yy.
+
+    Notes
+    -----
+    Data (xx,yy) must be lexicographically sorted.
+    `foo` must be
+    """
+    unique_y_per_x = np.zeros(shape=len(xx_index) - 1, dtype=np.uint32)
+    for x_idx in numba.prange(len(xx_index) - 1):
+        x_s = xx_index[x_idx]
+        x_e = xx_index[x_idx + 1]
+        s = x_s
+        for e in range(x_s + 1, x_e):
+            y_e = yy_grouped_by_xx[e]
+            y_s = yy_grouped_by_xx[s]
+            if y_e != y_s:
+                foo(s, e, *foo_args)
+                s = e
+                unique_y_per_x[x_idx] += 1
+        if progress_proxy is not None:
+            progress_proxy.update(1)
+    return unique_y_per_x
+
+
+@numba.njit(boundscheck=True)
+def test_foo_for_map_onto_lexsorted_indexed_data(left, right, *args):
+    pass
+
+
+def is_permutation(xx):
+    visited = np.zeros(len(xx), dtype=np.bool_)
+    visited[xx] = True
+    return np.sum(visited) == len(xx)
+
+
+@numba.njit(boundscheck=True)
+def get_index_2D(xx_index: npt.NDArray, yy: npt.NDArray, paranoid: bool = False):
+    unique_y_per_x = np.zeros(shape=len(xx_index) - 1, dtype=np.uint32)
+    res = []
+    x_s = xx_index[0]
+    for i, x_e in enumerate(xx_index[1:]):
+        if paranoid:
+            assert is_lex_nondecreasing(yy[x_s:x_e])
+        y_s = yy[x_s]
+        for j in range(x_s + 1, x_e):
+            y_e = yy[j]
+            if y_e != y_s:
+                res.append(j)
+                unique_y_per_x[i] += 1
+            y_s = y_e
+        x_s = x_e
+    res.append(x_e)
+    return res, unique_y_per_x
+
+
+@numba.njit
+def is_arange(res, _min=0, _max=None):
+    if _max is None:
+        _max = len(res)
+    for i, r in zip(range(_min, _max), res):
+        if i != r:
+            return False, i, r
+    return True, i, r

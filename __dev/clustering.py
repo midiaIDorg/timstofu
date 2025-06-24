@@ -20,6 +20,8 @@ from opentimspy import OpenTIMS
 from dictodot import DotDict
 from pathlib import Path
 from timstofu.numba_helper import get_min_int_data_type
+from timstofu.numba_helper import is_arange
+from timstofu.numba_helper import is_permutation
 from timstofu.numba_helper import melt
 from timstofu.numba_helper import permute_inplace
 from timstofu.sort_and_pepper import is_lex_nondecreasing
@@ -31,14 +33,12 @@ from timstofu.stats import count1D
 from timstofu.stats import count2D
 from timstofu.stats import cumsum
 from timstofu.stats import get_index
+from timstofu.stats import get_unique_cnts_in_groups
 from timstofu.stats import max_intensity_in_window
 from tqdm import tqdm
 
-from timstofu.sort_and_pepper import grouped_argsorts
-from timstofu.sort_and_pepper import lexargcountsort
-from timstofu.sort_and_pepper import make_idx
+from timstofu.sort_and_pepper import grouped_lexargcountsort
 
-grouped_argsort = grouped_argsorts[("safe", "multi_threaded")]
 
 folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
 raw_data = OpenTIMS(folder_dot_d)
@@ -50,9 +50,10 @@ raw_data = OpenTIMS(folder_dot_d)
 # Counter(rd1.groupby(["frame","tof"]).size())
 chosen_frames = raw_data.ms1_frames
 
+# do we need frames at the beginning? nope. others yes, sort of.
 cols = raw_data.query(chosen_frames, columns=("frame", "scan", "tof", "intensity"))
 frames, scans, tofs, intensities = cols.values()
-F, S, T, I = (
+frame_max, scan_max, tof_max, intensity_max = (
     v.max() + 1 for col, v in cols.items()
 )  # +1 needed to not go out of scope
 paranoid: bool = False
@@ -61,279 +62,356 @@ frame_counts = raw_data.frames["NumPeaks"][chosen_frames - 1]
 frame_index = get_index(frame_counts)
 event_count = frame_index[-1]
 if paranoid:
-    scans_tofs = make_idx(
-        (scans, tofs),
-        (S, T),
-        np.empty(shape=event_count, dtype=get_min_int_data_type(S * T)),
+    frame_scan_tof_order = grouped_lexargcountsort(
+        arrays=(scans, tofs),
+        group_index=frame_index,
+        array_maxes=(scan_max, tof_max),
     )
-    frame_scan_tof_order = grouped_argsort(scans_tofs, frame_index)
     assert is_lex_nondecreasing(frame_scan_tof_order)
     assert frame_scan_tof_order[0] == 0
     assert frame_scan_tof_order[-1] == event_count - 1
 
-# Here ok: tofs and scans are ordered by frames.
-tofs_scans = make_idx(
-    (tofs, scans),
-    (T, S),
-    np.empty(shape=event_count, dtype=get_min_int_data_type(S * T)),
+frame_tof_scan_order = grouped_lexargcountsort(
+    arrays=(tofs, scans),
+    group_index=frame_index,
+    array_maxes=(tof_max, scan_max),
+    # order=?, RAM OPTIMIZATION POSSIBILITY?
 )
-frame_tof_scan_order = grouped_argsort(tofs_scans, frame_index)  # need to test it too
-
-
-permute_inplace(scans, frame_tof_scan_order)  # reorders at small RAM price
-permute_inplace(tofs, frame_tof_scan_order)  # reorders at small RAM price
-permute_inplace(intensities, frame_tof_scan_order)  # reorders at small RAM price
 if paranoid:
-    assert is_lex_nondecreasing(frames, tofs, scans)  # huzzzaah!
+    assert is_permutation(frame_tof_scan_order)
 
 
-@numba.njit(boundscheck=True)
-def max_intensity_in_window(results, xx, weights, radius):
-    n = len(xx)
-    left = 0
-    right = 0
-    for i in range(n):
-        # Move left pointer to ensure xx[i] - xx[left] <= radius
-        while left < n and xx[i] - xx[left] > radius:
-            left += 1
-        # Move right pointer to ensure xx[right] - xx[i] <= radius
-        while right < n and xx[right] - xx[i] <= radius:
-            right += 1
+# reorder arrays at small RAM price, but only once.
+_visited = permute_inplace(scans, frame_tof_scan_order)
+if paranoid:
+    np.all(_visited)
+_visited = permute_inplace(tofs, frame_tof_scan_order, visited=_visited)
+if paranoid:
+    np.all(_visited)
+_visited = permute_inplace(intensities, frame_tof_scan_order, visited=_visited)
+if paranoid:
+    np.all(_visited)
 
-        max_val = 0.0
-        found = False
-        for j in range(left, right):
-            if j != i:
-                w = weights[j]
-                if not found or w > max_val:
-                    max_val = w
-                    found = True
-        results[i] = max_val if found else 0.0
+if paranoid:
+    assert is_lex_nondecreasing(frames, tofs, scans)  # huzzzaah! sorted
 
 
-# @numba.njit(boundscheck=True) # 3.95"
-@numba.njit(boundscheck=True, parallel=True)  # 0.5"
-def apply(
-    group_index, yy, zz, weights, radius, results, unique_yy, progress_proxy=None
-):
-    for i in numba.prange(len(group_index) - 1):
-        s = group_index[i]
-        e = group_index[i + 1]
-        prev_j = s
-        for j in range(s + 1, e):
-            if yy[j] != yy[prev_j]:
-                max_intensity_in_window(
-                    results[prev_j:j],
-                    zz[prev_j:j],
-                    weights[prev_j:j],
-                    radius,
-                )
-                prev_j = j
-                unique_yy[i] += 1
-            if progress_proxy is not None:
-                progress_proxy.update(1)
+# from timstofu.numba_helper import test_foo_for_map_onto_lexsorted_indexed_data
+# from timstofu.stats import max_around
+
+# now, another approach: do local 3D peak counts and intensity sums.
+
+# how many frame-scans per tof?
+# tof_counts = count1D(tofs)
+# tof_cnts, tof_cnts_cnts = np.unique(tof_counts, return_counts=True)
+# plt.scatter(tof_cnts, tof_cnts_cnts)
+# plt.xlabel("number of (frame,scan) pairs per tof")
+# plt.ylabel("count")
+# plt.xscale("log")
+# plt.yscale("log")
+# plt.show()
 
 
-max_intensities = np.empty(dtype=intensities.dtype, shape=intensities.shape)
-unique_tofs_per_frame = np.zeros(dtype=np.uint32, shape=len(frame_index) - 1)
-apply(
-    frame_index,
-    tofs,
-    scans,
-    intensities,
-    10,
-    max_intensities,
-    unique_tofs_per_frame,
-)
+# too many points of change for frame,tof = 90M
+# frame_tof_to_change, tofs_per_frame = get_index_2D(frame_index, tofs)
+# from timstofu.numba_helper import map_onto_lexsorted_indexed_data
+# from timstofu.stats import get_window_borders
 
-np.sum(max_intensities == intensities)  # still a bit on the small side.
-
-unique_max_intensities, max_intensity_counts = np.unique(
-    max_intensities, return_counts=True
-)
-plt.plot(unique_max_intensities[1:], max_intensity_counts[1:])
-plt.xlabel("max intensity")
-plt.ylabel("count")
-plt.yscale("log")
-plt.show()
+import math
 
 
-plt.plot(raw_data.ms1_frames, unique_tofs_per_frame)
-plt.xlabel("ms1 frame")
-plt.ylabel("unique tof values cnt")
-plt.show()
+@numba.njit(boundscheck=True, parallel=True)
+def map_onto_lexsorted_indexed_data(
+    xx_index: npt.NDArray,
+    yy_by_xx: npt.NDArray,
+    foo,
+    foo_args,
+    progress_proxy: ProgressBar | None = None,
+) -> npt.NDArray:
+    """Here we iterate over indexed xx but in groups by yy.
 
-
-plt.show()
-
-# so now we have frame ordered things by frame, tof, and scan.
-
-# so now we can run max_intensity in groups per frame.
-# each time we can simply create a view into seperate (frame,tof) value. And go through scans.
-
-
-max_intensity_in_window()
-
-
-# Prooooblem: scans and frames are not ordered at all by tofs: need to order them first.
-tof_counts = count1D(tofs)
-tof_index = get_index(tof_counts)
-tof_order = lexargcountsort(tofs, cumsum(tof_counts))  # 7.38"
-
-scans_frames = make_idx(
-    (scans, frames),
-    (S, F),
-    np.empty(shape=event_count, dtype=get_min_int_data_type(S * F)),
-)
-scans_frames = scans_frames[tof_order]
-tof_scan_frame_order = grouped_argsort(scans_frames, tof_index)
-
-
-# OK, we now have 2 more orders. what now?
-
-
-##
-
-dataset = LexSortedDataset.from_tdf(
-    folder_dot_d=raw_data,
-    level="precursor",
-)
-print(dataset)
-
-dataset.counts
-dataset.index
-dataset.columns
-dataset.columns.tof
-
-from timstofu.sort_and_pepper import argcountsort3D as lexargcountsort3D
-from timstofu.sort_and_pepper import is_lex_nondecreasing
-from timstofu.sort_and_pepper import lexargcountsort2D
-from timstofu.sort_and_pepper import rank_array
-from timstofu.stats import get_precumsums
-
-# rename to lexargcountsort3D
-# def transpose_frame_scan
-
-counts = dataset.counts.T
-index = get_precumsums(counts)
-
-# Now we need what? we have tofs. we need to sort them into (scan,frame) order.
-
-
-scans, frames, counts = melt(counts)
-scans = np.repeat(scans, counts)
-frames = np.repeat(frames, counts)
-
-scan_frame_order = lexargcountsort3D(scans, frames, dataset.columns.tof)
-assert not is_lex_nondecreasing(scan_frame_order)  # almost impossible, unless empty.
-
-
-scan_frame_order_invert = np.argsort(scan_frame_order, kind="stable")
-scan_frame_order_invert2 = rank_array(scan_frame_order_invert)
-
-np.testing.assert_equal(scan_frame_order_invert, scan_frame_order_invert2)
-
-
-max_tof = dataset.columns.tof.max()
-
-
-counts.sum()
-
-
-counts = precursors.counts
-
-frames, scans, nonzero_counts = melt(counts)
-long_frames = np.repeat(frames, nonzero_counts)  # can we avoid that?
-long_scans = np.repeat(scans, nonzero_counts)  # can we avoid that?
-
-
-@njit
-def correlate_sparse(tofs, intensities, kernel, results):
-    n = len(tofs)
-    left = 0
-    right = 0
-    kernel_size = len(kernel)
-    K = kernel_size // 2 - 1
-
-    for i in range(n):
-        # Slide window: include all j such that |tofs[j] - tofs[i]| <= K
-        while left < n and tofs[i] - tofs[left] > K:
-            left += 1
-        while right < n and tofs[right] - tofs[i] <= K:
-            right += 1
-
-        acc = 0.0
-        for j in range(left, right):
-            offset = np.int32(tofs[j]) - tofs[i]
-            kernel_index = int(round(offset + K))  # shift offset to index in kernel
-            if 0 <= kernel_index < kernel_size:
-                acc += intensities[j] * kernel[kernel_index]
-        result[i] = acc
-
-    return result
+    Notes
+    -----
+    Data (xx,yy) must be lexicographically sorted.
+    `foo` must be
+    """
+    unique_y_per_x = np.zeros(shape=len(xx_index) - 1, dtype=np.uint32)
+    for i in numba.prange(len(xx_index) - 1):
+        j_s = xx_index[i]
+        j_e = xx_index[i + 1]
+        j_prev = j_s
+        y_prev = yy_by_xx[j_prev]
+        for j in range(j_s + 1, j_e):
+            y = yy_by_xx[j]
+            if y != y_prev:
+                unique_y_per_x[i] += 1
+                foo(j_prev, j, *foo_args)
+                y_prev = y
+                j_prev = j
+        foo(j_prev, j_e, *foo_args)
+        if progress_proxy is not None:
+            progress_proxy.update(1)
+    return unique_y_per_x
 
 
 @numba.njit
-def tof_stripe_maxes(
-    counts,
-    index,
-    tofs,
-    intensities,
-    window_size=5,
-    progress_proxy=None,
-    maxes=None,
-):
-    assert len(tofs) == len(intensities)
-    if maxes is None:
-        N = len(tofs)
-        maxes = np.empty(shape=N, dtype=intensities.dtype)
-    frames, scans, cnts = melt(counts)
-    for i in numba.prange(len(frames)):
-        f = frames[i]
-        s = scans[i]
-        start = index[f, s]
-        end = start + counts[f, s]
-        max_intensity_in_window(
-            tofs[start:end], intensities[start:end], window_size, maxes[start:end]
-        )
-        if progress_proxy is not None:
-            progress_proxy.update(1)
-    return maxes
+def foo1(s, e, res):
+    left = s
+    right = s
+    for i in range(s, e):
+        res[i] = e - s
 
 
-distinct_frame_scan_cnt = np.count_nonzero(precursors.counts)
-tof_maxes = np.empty(len(precursors), dtype=precursors.columns.intensity.dtype)
-with ProgressBar(total=distinct_frame_scan_cnt) as progress_proxy:
-    tof_stripe_maxes(
-        precursors.counts,
-        precursors.index,
-        precursors.columns.tof,
-        precursors.columns.intensity,
-        window_size=11,
-        progress_proxy=progress_proxy,
-        maxes=tof_maxes,
+res = np.zeros(dtype=np.uint32, shape=len(scans))
+N_max = 100
+with ProgressBar(total=N_max - 1, desc="Getting stats") as progress_proxy:
+    unique_tofs_per_frame = map_onto_lexsorted_indexed_data(
+        frame_index[:N_max],
+        tofs,
+        foo1,
+        (res,),  # foo1 args
+        progress_proxy,
     )
 
-np.sum(precursors.columns.intensity == tof_maxes) / len(tof_maxes)
+
+@numba.njit(boundscheck=True)
+def get_window_borders(i, i_max, xx, radius, left=0, right=0):
+    x = xx[i]
+    while left < i and xx[left] + radius < x:
+        left += 1
+    right = max(i, right)
+    while right < i_max and xx[right] <= x + radius:
+        right += 1
+    return left, right
 
 
-# np.quantile(nonzero_counts)
-# x, y = np.unique(nonzero_counts, return_counts=True)
-# plt.plot(x, y)
+@numba.njit
+def foo2(s, e, zz, radius, res, borders):
+    left = s
+    right = s
+    for i in range(s, e):
+        res[i] = e - s
+        # zz sorted -> can update left and right
+        left, right = get_window_borders(i, e, zz, radius, left, right)
+        borders[i, 0] = left
+        borders[i, 1] = right
+
+
+N = 10000
+res = np.zeros(dtype=np.uint32, shape=len(scans))
+borders = np.zeros(dtype=np.uint32, shape=(len(scans), 2))
+with ProgressBar(total=len(frame_index) - 1, desc="Getting stats") as progress_proxy:
+    unique_tofs_per_frame = map_onto_lexsorted_indexed_data(
+        frame_index[:N],
+        tofs,
+        foo2,
+        (  # foo args
+            scans,
+            10,
+            res,
+            borders,
+        ),  # foo args
+        progress_proxy,
+    )
+
+
+frame_tof_cnt, cnt = np.unique(res, return_counts=True)
+# How many scans per frame,tof?
+# plt.scatter(frame_tof_cnt, cnt)
+# plt.xlabel("number of scans per (frame,tof)")
+# plt.ylabel("count")
+# # plt.xscale("log")
+# plt.yscale("log")
 # plt.show()
-np.repeat([1, 2, 3], [4, 5, 6])
-
-arr = np.array([50, 50, 10, 30])
-sort_order = np.argsort(arr, stable=True)
-reverse_order = np.argsort(sort_order, stable=True)
 
 
-print("Original:", arr)
-print("Sort order:", sort_order)
-print("Reverse mapping:", reverse_order)
-print("Ranks:", rank_array(sort_order))
-print(arr[sort_order])
-print(arr[sort_order][reverse_order])
-print(arr[sort_order][reverse_order])
+# seems we are not vising all.
+len(np.nonzero(res == 0)[0])
+frame_index
+# should I have changed frame index? no, why?
 
-rank_array()
+
+@numba.njit(boundscheck=True)
+def get_window_borders(i, xx, radius, left=0, right=0):
+    """
+    Parameters
+    ----------
+    i (int): Current index in xx.
+    xx (np.array): A sorted array (non-decrasing).
+    left (int): Currently explored left end.
+    right (int): Currently explored right end.
+    radius (int): A positive integer.
+
+    Returns
+    -------
+    tuple: updated values of left and right.
+    """
+    N = len(xx)
+    x = xx[i]
+    # Move left pointer to ensure xx[i] - xx[left] <= radius
+    while left < N and radius + xx[left] < x:
+        left += 1
+    right = max(i, right)
+    # Move right pointer to ensure xx[right] - xx[i] <= radius
+    while right < N and xx[right] <= x + radius:
+        right += 1
+    return left, right
+
+
+@numba.njit
+def foo(s, e, yy, intensities, radius, boundries):
+    for i in range(s, e):
+        s, e = get_window_borders(i, yy, radius, s, e)
+        boundries[i, 0] = s
+        boundries[i, 1] = e
+
+
+results = DotDict(
+    scans_boundries=np.empty(dtype=scans.dtype, shape=(len(scans), 2)),
+)
+with ProgressBar(total=len(frame_index) - 1, desc="Getting stats") as progress_proxy:
+    unique_tofs_per_frame = map_onto_lexsorted_indexed_data(
+        frame_index,
+        tofs,
+        foo,  # foo
+        # test_foo_for_map_onto_lexsorted_indexed_data,
+        (  # foo args
+            scans,
+            intensities,
+            10,
+            results.scans_boundries,
+        ),
+        progress_proxy,
+    )
+
+
+@numba.njit(boundscheck=True)
+def find_bounds(xx, s, e, i, x_min):
+    i = np.int64(i)
+    # Search left
+    left = i
+    while left >= s and xx[left] <= x_min:
+        left -= 1
+    # Search right
+    right = i
+    while right <= e and xx[right] <= x_min:
+        right += 1
+    # Clamp to boundaries
+    left = max(left, s)
+    right = min(right, e)
+    return left, right
+
+
+@numba.njit(boundscheck=True)
+def window_stats(
+    left,
+    right,
+    # real args
+    zz,
+    intensities,
+    radius,
+    min_intensity,
+    # results
+    is_local_max,
+    boundries,
+):
+    s = left
+    e = left
+    for i in range(left, right):
+        s, e = get_window_borders(i, zz, radius, s, e)
+        s0, e0 = find_bounds(intensities, s, e, i, min_intensity)
+        boundries[i, 0] = s
+        boundries[i, 1] = e
+        # boundries[i, 0] = s0
+        # boundries[i, 1] = e0
+        neighborhood_max = max_around(intensities, i, s, e) if e - s > 0 else 0
+        is_local_max[i] = neighborhood_max == intensities[i]
+
+
+results = DotDict(
+    is_local_max=np.empty(dtype=np.bool_, shape=intensities.shape),
+    scans_boundries=np.empty(dtype=scans.dtype, shape=(len(scans), 2)),
+)
+with ProgressBar(total=len(frame_index) - 1, desc="Getting stats") as progress_proxy:
+    unique_tofs_per_frame = map_onto_lexsorted_indexed_data(
+        frame_index,
+        tofs,
+        window_stats,  # foo
+        # test_foo_for_map_onto_lexsorted_indexed_data,
+        (  # foo args
+            scans,
+            intensities,
+            10,
+            0,
+            results.is_local_max,
+            results.scans_boundries,
+        ),
+        progress_proxy,
+    )
+
+local_maxes_cnt = np.sum(is_local_max)
+f"{local_maxes_cnt / len(is_local_max) * 100:.4f}%"
+# what is needed: results allocator and stats function and its parameters.
+
+
+@numba.njit(boundscheck=True)
+def area_stats(
+    left: int,
+    right: int,
+    # real args
+    zz: npt.NDArray,
+    intensities: npt.NDArray,
+    radius: int,
+    # results
+    left_border: npt.NDArray,
+    right_border: npt.NDArray,
+    cnts: npt.NDArray,
+    tics: npt.NDArray,
+):
+    s = left
+    e = left
+    for i in range(left, right):
+        s, e = get_window_borders(i, zz, radius, s, e)  # indices of the moving window
+        left_border[i] = s
+        right_border[i] = e
+        cnts[i] = e - s
+        tics[i] = intensities[s:e].sum()
+
+
+results = DotDict(
+    left=np.zeros(dtype=np.uint32, shape=intensities.shape),
+    right=np.zeros(dtype=np.uint32, shape=intensities.shape),
+    cnts=np.zeros(dtype=np.uint32, shape=intensities.shape),
+    tics=np.zeros(dtype=np.uint32, shape=intensities.shape),
+)
+with ProgressBar(total=len(frame_index) - 1, desc="Getting stats") as progress_proxy:
+    unique_tofs_per_frame = map_onto_lexsorted_indexed_data(
+        frame_index,
+        tofs,
+        area_stats,  # foo
+        # test_foo_for_map_onto_lexsorted_indexed_data,
+        (  # foo args
+            scans,
+            intensities,
+            100,
+            results.left,
+            results.right,
+            results.cnts,
+            results.tics,
+        ),
+        progress_proxy,
+    )
+
+np.all(results.right - results.left == results.cnts)
+
+funny = results.cnts == 24
+funny.nonzero()
+
+results.left[51336746]
+results.right[51336746]
+
+results.left
+# look like the last value is not considered at all and every left window borded is always the same as before... annoying. Can it be true?
+# Perhaps?
+
+np.unique(results.cnts, return_counts=True)

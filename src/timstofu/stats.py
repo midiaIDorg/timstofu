@@ -217,7 +217,7 @@ def count_unique_for_indexed_data(
     return unique_counts
 
 
-# TODO: There should be one function. We should not use counts, but enlarge the index by 1 in every dim to make better use of RAM.
+@numba.njit(boundscheck=True)
 def get_index(counts: npt.NDArray) -> npt.NDArray:
     """Turn counts into cumulated sums offset by one 0 at the beginning.
 
@@ -232,26 +232,110 @@ def get_index(counts: npt.NDArray) -> npt.NDArray:
     """
     index = np.empty(shape=len(counts) + 1, dtype=np.uint32)
     index[0] = 0
-    np.cumsum(counts, out=index[1:])
+    i = 1
+    for cnt in counts:
+        index[i] = index[i - 1] + cnt
+        i += 1
     return index
 
 
-@numba.njit(boundscheck=True)
-def max_intensity_in_window(xx, weights, radius, results):
-    n = len(xx)
-    left = 0
-    right = 0
-    for i in range(n):
-        # Move left pointer to ensure xx[i] - xx[left] <= radius
-        while left < n and xx[i] - xx[left] > radius:
-            left += 1
-        # Move right pointer to ensure xx[right] - xx[i] <= radius
-        while right < n and xx[right] - xx[i] <= radius:
-            right += 1
+def test_get_index():
+    counts = np.array([1, 2, 5, 60])
+    cumsum_idx = get_index(counts)
+    np.testing.assert_equal(cumsum_idx[1:], np.cumsum(counts))
 
-        # Compute the max intensity in the current window [left, right)
-        max_val = weights[left]
-        for j in range(left + 1, right):
-            if weights[j] > max_val:
-                max_val = weights[j]
-        results[i] = max_val
+
+# @numba.njit(boundscheck=True)
+# def get_window_borders(i, xx, radius, left=0, right=0):
+#     """
+#     Parameters
+#     ----------
+#     i (int): Current index in xx.
+#     xx (np.array): A sorted array (non-decrasing).
+#     left (int): Currently explored left end.
+#     right (int): Currently explored right end.
+#     radius (int): A positive integer.
+
+#     Returns
+#     -------
+#     tuple: updated values of left and right.
+#     """
+#     N = len(xx)
+#     x = np.intp(xx[i])
+#     # Move left pointer to ensure xx[i] - xx[left] <= radius
+#     while left < N and x - xx[left] > radius:
+#         left += 1
+#     right = max(i, right)
+#     # Move right pointer to ensure xx[right] - xx[i] <= radius
+#     while right < N and xx[right] - x <= radius:
+#         right += 1
+#     return left, right
+
+
+@numba.njit(boundscheck=True)
+def get_window_borders(i, xx, radius, left=0, right=0):
+    """
+    Parameters
+    ----------
+    i (int): Current index in xx.
+    xx (np.array): A sorted array (non-decrasing).
+    left (int): Currently explored left end.
+    right (int): Currently explored right end.
+    radius (int): A positive integer.
+
+    Returns
+    -------
+    tuple: updated values of left and right.
+    """
+    N = len(xx)
+    x = xx[i]
+    # Move left pointer to ensure xx[i] - xx[left] <= radius
+    while left < N and radius + xx[left] < x:
+        left += 1
+    right = max(i, right)
+    # Move right pointer to ensure xx[right] - xx[i] <= radius
+    while right < N and xx[right] <= x + radius:
+        right += 1
+    return left, right
+
+
+def test_get_window_borders():
+    N = 1000
+    K = 100
+    xx = np.arange(N)
+    for i in range(K, len(xx) - K):
+        s, e = get_window_borders(i, xx, K)
+        assert e - s == 2 * K + 1
+
+
+@numba.njit(boundscheck=True)
+def max_around(ww, i, left, right):
+    assert left < right
+    _max = -math.inf
+    for j in range(left, right):
+        if j != i:
+            _max = max(_max, ww[j])
+    return _max
+
+
+@numba.njit(boundscheck=True)
+def max_intensity_in_window(results, xx, weights, radius, left=0, right=0):
+    for i in range(len(xx)):
+        left, right = get_window_borders(i, xx, radius, left, right)
+        neighborhood_max = max_around(weights, i, left, right)
+        results[i] = neighborhood_max
+
+
+@numba.njit(boundscheck=True, parallel=True)
+def get_unique_cnts_in_groups(xx_index: npt.NDArray, yy: npt.NDArray):
+    unique_y_per_x = np.zeros(shape=len(xx_index) - 1, dtype=np.uint32)
+    for i in numba.prange(len(xx_index) - 1):
+        x_s = xx_index[i]
+        x_e = xx_index[i + 1]
+        y_prev = yy[x_s]
+        for j in range(x_s + 1, x_e):
+            y = yy[j]
+            if y != y_prev:
+                unique_y_per_x[i] += 1
+            y_prev = y
+    return unique_y_per_x

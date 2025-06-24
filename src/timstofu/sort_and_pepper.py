@@ -1,4 +1,5 @@
 import functools
+import math
 import numba
 import numpy as np
 import numpy.typing as npt
@@ -6,7 +7,9 @@ import pandas as pd
 
 from numba_progress import ProgressBar
 
+from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import inputs_series_to_numpy
+from timstofu.numba_helper import np_uints
 from timstofu.numba_helper import numba_wrap
 from timstofu.stats import _count_unique
 from timstofu.stats import count2D
@@ -14,12 +17,10 @@ from timstofu.stats import count_unique_for_indexed_data
 from timstofu.stats import cumsum
 from timstofu.stats import get_precumsums
 
-from math import inf
-
 
 @numba.njit(cache=True)
 def _is_nondecreasing(xx):
-    x_prev = -inf
+    x_prev = -math.inf
     for x in xx:
         if x_prev > x:
             return False
@@ -149,13 +150,13 @@ def deduplicate(
     counts_idx = 0
     current_group_count = 0
     dedup_idx = -1
-    prev_tof = -inf
+    prev_tof = -math.inf
 
     for i, (tof, intensity) in enumerate(zip(sorted_tofs, sorted_intensities)):
         if current_group_count == nondeduplicated_counts[counts_idx]:
             counts_idx += 1
             current_group_count = 0
-            prev_tof = -inf  # force top > prev_tof
+            prev_tof = -math.inf  # force top > prev_tof
 
         if tof > prev_tof:
             dedup_idx += 1
@@ -384,9 +385,9 @@ grouped_argsort = grouped_argsorts["safe", "multi_threaded"]
 
 
 @numba.njit
-def make_idx(arrays, maxes, res):
+def merge_uints(arrays, maxes, res):
     """
-    Combines multiple integer arrays into a single unique index per row using Horner's method.
+    Encode multiple uints into a single unique uint per row using Horner's method.
 
     This function encodes N-dimensional integer coordinates into a single integer index,
     similar to row-major flattening of a multi-dimensional array. It assumes that for each
@@ -451,3 +452,65 @@ def lexargcountsort(
         assert j < len(xx), "idx beyond scope"
         order[j] = i
     return order
+
+
+@numba.njit
+def zip_uints_into_bigger_uint(
+    uint_arrays,
+    array_maxes,
+    start_idx,
+    end_idx,
+    results,
+):
+    """Zip uints into a bigger int using Horner scheme."""
+    assert start_idx <= end_idx
+    assert end_idx <= len(results)
+    for i in range(start_idx, end_idx):
+        results[i] = 0
+        for j in range(len(uint_arrays)):
+            results[i] *= array_maxes[j]
+            results[i] += uint_arrays[j][i]
+
+
+@numba.njit(boundscheck=True, parallel=True)
+def _countlexargsort(arrays, array_maxes, group_index, order) -> npt.NDArray:
+    """Sort arrays.
+
+    Parameters
+    ----------
+    arrays (tuple): A tuple of arrays to be argsorted, grouped by index.
+    grouped_index (np.array): 1D array with counts, one field larger than the number of different values of the grouper.
+
+    Notes
+    -----
+    `group_index[i]:group_index[i+1]` returns a view into all members of the i-th group.
+    """
+    assert len(arrays) > 0
+    for i in numba.prange(len(group_index) - 1):
+        s = group_index[i]
+        e = group_index[i + 1]
+        zip_uints_into_bigger_uint(arrays, array_maxes, s, e, order)
+        order[s:e] = s + np.argsort(order[s:e])
+    return order
+
+
+def grouped_lexargcountsort(
+    arrays: tuple[npt.NDArray, ...],
+    group_index: npt.NDArray,
+    array_maxes: tuple[int, ...] | None = None,
+    order: npt.NDArray | None = None,
+):
+    assert len(group_index.shape) == 1
+    size = group_index[-1]
+    for arr in arrays:
+        assert len(arr.shape) == 1, "Arrays must be 1D."
+        assert len(arr) == size, "Arrays must be equaly sized."
+        assert arr.dtype in np_uints, "Arrays must be some version of np.uint"
+    if order is None:
+        order = np.empty(
+            shape=size,
+            dtype=get_min_int_data_type(math.prod(array_maxes)),
+        )
+    if array_maxes is None:
+        array_maxes = (arr.max() for arr in arrays)
+    return _countlexargsort(arrays, array_maxes, group_index, order)
