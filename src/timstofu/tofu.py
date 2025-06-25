@@ -155,15 +155,15 @@ class CompactDataset:
     def melt_index(
         self,
         very_long: bool = False,
-        dtype: type | None = None,
+        _dtype: type | None = None,
         _empty: Callable = empty,
     ) -> tuple[tuple[NDArray, ...], NDArray]:
         """Represent counts in long format including counts.
 
         Parameters:
             very_long (bool): Instead of unique values of coordinates kept in self.counts, report them repeated as many times as they appear in counts.
-            dtype (type): Force one dtype for all results.
-            _empty (Callable): Allocator of empty arrays.
+            _dtype (type): Force one dtype for all results.
+            _empty (Callable): Allocator of empty arrays: USED ONLY WHEN DEALING WITH VERY_LONG format.
 
         Returns:
             tuple of a tuple of numpy arrays representing the coordinates in the long or even very long format, and an array of counts.
@@ -172,12 +172,21 @@ class CompactDataset:
         counts = melted[-1]
         res = []
         size = None
-        for xx in melted[:-1]:
-            if dtype is None:
-                dtype = get_min_int_data_type(xx.max() + 1)
+        N = counts.sum()
+        for i in range(len(melted) - 1):
+            xx = melted[i]
+            dtype = (
+                get_min_int_data_type(xx.max() + 1, signed=True)
+                if _dtype is None
+                else _dtype
+            )
             xx = xx.astype(dtype)
             if very_long:
-                xx = decount(xx, counts)
+                xx = decount(
+                    xx,
+                    counts,
+                    _results=_empty(name=f"long_coordinate_{i}", dtype=dtype, shape=N),
+                )
                 if len(self) > 0:
                     assert len(xx) == len(self)
             if size is None:

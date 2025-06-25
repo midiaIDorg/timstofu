@@ -39,6 +39,10 @@ sorted_clusters = LexSortedClusters.from_df(
     _empty=mmap_sorted_clusters.empty,
 )
 
+sorted_clusters.counts.nonzero()
+melt(sorted_clusters.counts)
+
+sorted_clusters.melt_index(very_long=False)
 sorted_clusters.melt_index(very_long=True)
 # make it into a tofu.CompactDataset method.
 

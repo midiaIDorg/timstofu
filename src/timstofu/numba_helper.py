@@ -4,10 +4,10 @@ import itertools
 import numba
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 
 from numba_progress import ProgressBar
+from numpy.typing import NDArray
 
 
 @numba.njit
@@ -131,7 +131,7 @@ def test_split_args_into_K():
 
 
 @numba.njit
-def add_matrices_with_potentially_different_shapes(*arrays: npt.NDArray):
+def add_matrices_with_potentially_different_shapes(*arrays: NDArray):
     """Add a variable number of 2D arrays with potentially different shapes.
 
     Result will simply be the maximal shaped array.
@@ -173,10 +173,10 @@ def test_add_matrices_with_potentially_different_shapes():
 
 @numba.njit
 def write_orderly(
-    in_arr: npt.NDArray,
-    out_arr: npt.NDArray,
-    order: npt.NDArray,
-) -> npt.NDArray:
+    in_arr: NDArray,
+    out_arr: NDArray,
+    order: NDArray,
+) -> NDArray:
     """Write fron in_arr to out_arr using order."""
     assert len(in_arr) == len(out_arr)
     assert len(in_arr) == len(order)
@@ -187,9 +187,9 @@ def write_orderly(
 
 @numba.njit
 def copy(
-    in_arr: npt.NDArray,
-    out_arr: npt.NDArray,
-) -> npt.NDArray:
+    in_arr: NDArray,
+    out_arr: NDArray,
+) -> NDArray:
     """Write fron in_arr to out_arr using order."""
     assert len(in_arr) == len(out_arr)
     for i in range(len(in_arr)):
@@ -240,18 +240,32 @@ def melt(arr):
 
 
 @numba.njit
-def decount(xx, counts):
-    """Opposite to melt for 1D data."""
-    res = np.empty(shape=np.sum(counts), dtype=xx.dtype)
+def decount(xx: NDArray, counts: NDArray, _results: NDArray | None = None):
+    """Opposite to melt for 1D data.
+
+    Equivalent of np.reapeat(xx, counts) that preserves dtype and allows use of a preallocated array.
+
+    Parameters:
+        xx (np.array): Array with entries that will get repeated.
+        counts (np.array): Array with numbers of repeats to perform for each element of xx.
+        _results (np.array): Optional preallocated place for keeping the resulting long format version of xx.
+
+    Returns:
+        np.array:
+    """
+    xx_final_size = counts.sum()
+    if _results is None:
+        _results = np.empty(shape=xx_final_size, dtype=xx.dtype)
+    assert xx_final_size == len(_results)
     i = 0
     for x, cnt in zip(xx, counts):
         for _ in range(cnt):
-            res[i] = x
+            _results[i] = x
             i += 1
-    return res
+    return _results
 
 
-def to_numpy(xx: npt.NDArray | pd.Series):
+def to_numpy(xx: NDArray | pd.Series):
     if isinstance(xx, pd.Series):
         xx = xx.to_numpy()
     return xx
@@ -326,12 +340,12 @@ def test_permute_inplace():
 
 @numba.njit(boundscheck=True, parallel=True)
 def map_onto_lexsorted_indexed_data(
-    xx_index: npt.NDArray,
-    yy_by_xx: npt.NDArray,
+    xx_index: NDArray,
+    yy_by_xx: NDArray,
     foo,
     foo_args,
     progress_proxy: ProgressBar | None = None,
-) -> npt.NDArray:
+) -> NDArray:
     """Here we iterate over indexed xx but in groups by yy.
 
     Notes
@@ -370,7 +384,7 @@ def is_permutation(xx):
 
 
 @numba.njit(boundscheck=True)
-def get_index_2D(xx_index: npt.NDArray, yy: npt.NDArray, paranoid: bool = False):
+def get_index_2D(xx_index: NDArray, yy: NDArray, paranoid: bool = False):
     unique_y_per_x = np.zeros(shape=len(xx_index) - 1, dtype=np.uint32)
     res = []
     x_s = xx_index[0]
