@@ -221,7 +221,7 @@ class CompactDataset:
         assert (
             most_frequent_diff == unique_diffs.min()
         ), "Most frequent diff is not the smallest one."
-        indices = np.r_[xx[0] : xx[-1] : most_frequent_diff]
+        indices = np.r_[xx[0] : xx[-1] + 1 : most_frequent_diff]
         new_counts = np.take(self.counts, indices, axis=1 - cut_rows)
         return self.__class__(counts=new_counts, columns=self.columns)
 

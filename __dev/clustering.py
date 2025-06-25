@@ -87,33 +87,31 @@ if False:
         )
 
         if ms_level == PRECURSOR_LEVEL:
-            simulated_precursors.cut_counts()
-
-            # drt = discrete retention time
-            (frames, scans), counts = simulated_precursors.melt_index()
-            drt2frame = np.unique(frames)
-            drt_max = len(drt2frame)
-            frame2drt_dct = {int(frame): drt for drt, frame in enumerate(drt2frame)}
-            drt_scan_to_count = simulated_precursors.counts[drt2frame, :]
-            drts, scans, drt_scan_to_count = melt(drt_scan_to_count)
-
-            # TODO: make a method that goes from one datatype to another?
-
+            simulated_precursors_drt_based = simulated_precursors.cut_counts()
+            (
+                drts,
+                scans,
+            ), drt_scan_to_count = simulated_precursors_drt_based.melt_index(
+                very_long=True
+            )
         else:
-            # TODO: we need to still do something here, or not?
-            drts, scans, frame_scan_to_count = melt(simulated_precursors.counts)
+            raise NotImplementedError
+            # # TODO: we need to still do something here, or not?
+            # drts, scans, frame_scan_to_count = melt(simulated_precursors.counts)
 
     assert drt_scan_to_count.sum() == len(simulated_precursors)
 
-    drts = decount(drts.astype(np.uint32), drt_scan_to_count)
-    scans = decount(scans.astype(np.uint32), drt_scan_to_count)
     tofs = sorted_clusters.columns.tof
     intensities = sorted_clusters.columns.intensity
-    drt_counts = count1D(drts)
+
+
 else:
     folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
     raw_data = OpenTIMS(folder_dot_d)
     chosen_frames = raw_data.ms1_frames
+
+    raw_data.frames["NumPeaks"][chosen_frames - 1].sum()
+    max_tof = raw_data.query(chosen_frames, columns="tof")["tof"].max()
 
     # do we need frames at the beginning? nope. others yes, sort of.
     cols = raw_data.query(chosen_frames, columns=("scan", "tof", "intensity"))
