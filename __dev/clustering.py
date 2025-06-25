@@ -48,7 +48,6 @@ from timstofu.tofu import LexSortedClusters
 from timstofu.tofu import LexSortedDataset
 
 from mmapuccino import MmapedArrayValuedDict
-from pathlib import Path
 from shutil import rmtree
 
 
@@ -70,6 +69,7 @@ if False:
         simulated_sorted_clusters_path = Path(
             "/home/matteo/tmp/simulated_sorted_clusters.mmappet"
         )
+        
         rmtree(simulated_sorted_clusters_path, ignore_errors=True)
         simulated_sorted_clusters_path.mkdir(parents=True)
         rmtree(simulated_precursors_path, ignore_errors=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numpy.typing import NDArray
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,9 @@ from tqdm import tqdm
 
 from timstofu.numba_helper import add_matrices_with_potentially_different_shapes
 from timstofu.numba_helper import copy
+from timstofu.numba_helper import decount
+from timstofu.numba_helper import get_min_int_data_type
+from timstofu.numba_helper import melt
 from timstofu.numba_helper import split_args_into_K
 from timstofu.numba_helper import to_numpy
 from timstofu.numba_helper import write_orderly
@@ -31,7 +35,6 @@ from timstofu.misc import is_data_dict
 
 import numba
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 
 # END OBSOLETE
@@ -41,10 +44,10 @@ import pandas as pd
 # This should be simpler if we have the order already.
 @numba.njit
 def combine_datasets(
-    self_counts: npt.NDArray,
-    self_index: npt.NDArray,
-    other_counts: npt.NDArray,
-    other_index: npt.NDArray,
+    self_counts: NDArray,
+    self_index: NDArray,
+    other_counts: NDArray,
+    other_index: NDArray,
     progress_proxy: ProgressBar | None = None,
     *self_and_other_columns,
 ):
@@ -97,9 +100,9 @@ def combine_datasets(
 
 @dataclass
 class CompactDataset:
-    counts: npt.NDArray
+    counts: NDArray
     columns: DotDict
-    index: npt.NDArray | None = None
+    index: NDArray | None = None
 
     def __post_init__(self):
         if self.index is None:
@@ -148,6 +151,40 @@ class CompactDataset:
             counts=counts,
             columns=DotDict(zip(self.columns, columns)),
         )
+
+    def melt_index(
+        self,
+        very_long: bool = False,
+        dtype: type | None = None,
+        _empty: Callable = empty,
+    ) -> tuple[tuple[NDArray, ...], NDArray]:
+        """Represent counts in long format including counts.
+
+        Parameters:
+            very_long (bool): Instead of unique values of coordinates kept in self.counts, report them repeated as many times as they appear in counts.
+            dtype (type): Force one dtype for all results.
+            _empty (Callable): Allocator of empty arrays.
+
+        Returns:
+            tuple of a tuple of numpy arrays representing the coordinates in the long or even very long format, and an array of counts.
+        """
+        melted = melt(self.counts)
+        counts = melted[-1]
+        res = []
+        size = None
+        for xx in melted[:-1]:
+            if dtype is None:
+                dtype = get_min_int_data_type(xx.max() + 1)
+            xx = xx.astype(dtype)
+            if very_long:
+                xx = decount(xx, counts)
+                if len(self) > 0:
+                    assert len(xx) == len(self)
+            if size is None:
+                size = len(xx)
+            assert size == len(xx)
+            res.append(xx)
+        return tuple(res), counts
 
     def to_npz(self, output_path: str, compress: bool = True) -> None:
         """Save to npz format (including columns)."""
@@ -201,10 +238,10 @@ class CompactDataset:
 
 
 def _count_frame_scans(
-    frames: npt.NDArray,
-    scans: npt.NDArray,
+    frames: NDArray,
+    scans: NDArray,
     _empty: Callable = empty,
-) -> npt.NDArray:
+) -> NDArray:
     _frame_scan_to_count, *_ = count2D(frames, scans)
     frame_scan_to_count = _empty(
         name="counts",
@@ -220,11 +257,11 @@ class LexSortedClusters(CompactDataset):
     @classmethod
     def from_df(
         cls,
-        df: pd.DataFrame | dict[str, npt.NDArray],
+        df: pd.DataFrame | dict[str, NDArray],
         return_order: bool = False,
         _do_paranoid_checks: bool = False,
         _empty: Callable = empty,
-    ) -> CompactDataset | tuple[CompactDataset, npt.NDArray]:
+    ) -> CompactDataset | tuple[CompactDataset, NDArray]:
         """
         Arguments:
             df (pd.DataFrame): Opened data frame with ClusterID column.
@@ -265,9 +302,7 @@ class LexSortedClusters(CompactDataset):
         )
         return (sorted_clusters, lex_order) if return_order else sorted_clusters
 
-    def count_unique_frame_scan_tof_tuples(
-        self, unique_counts: npt.NDArray | None = None
-    ):
+    def count_unique_frame_scan_tof_tuples(self, unique_counts: NDArray | None = None):
         """Count unique (frame,scan,tof) occurrences among all events per each (frame,scan) pair.
 
         Parameters
@@ -362,7 +397,7 @@ class LexSortedDataset(CompactDataset):
     @classmethod
     def from_df(
         cls,
-        df: pd.DataFrame | dict[str, npt.NDArray] | DotDict[str, npt.NDArray],
+        df: pd.DataFrame | dict[str, NDArray] | DotDict[str, NDArray],
         _empty: Callable = empty,
         _indexing_columns: tuple[str, str] = ("frame", "scan"),
         _satellite_columns: tuple[str, ...] = ("tof", "intensity"),
