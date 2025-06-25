@@ -29,6 +29,9 @@ clusters_path = "/home/matteo/tmp/test1.mmappet"  # real fragment clusters
 
 output_folder: str | Path | None = "/tmp/test_blah.tofu"
 shutil.rmtree(output_folder)
+
+
+
 sorted_clusters_on_drive, lex_order = LexSortedClusters.from_df(
     df=open_dataset_dct(clusters_path),
     output_folder=output_folder

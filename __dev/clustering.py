@@ -52,9 +52,17 @@ from pathlib import Path
 from shutil import rmtree
 
 
-SIMULATED = FALSE
+PRECURSOR_LEVEL = 1
+FRAGMENT_LEVEL = 2
 
-if SIMULATED:
+
+ms_level: int = PRECURSOR_LEVEL
+paranoid: bool = False
+
+
+assert ms_level in (PRECURSOR_LEVEL, FRAGMENT_LEVEL)
+
+if False:
     simulated_precursors_path = Path("/home/matteo/tmp/simulated_precursors.mmappet")
     try:
         simulated_precursors = LexSortedDataset.from_tofu(simulated_precursors_path)
@@ -78,32 +86,58 @@ if SIMULATED:
             _zeros=mmap_simulated_precursors.zeros,
         )
 
-    frames, scans, frame_scan_to_count = melt(simulated_precursors.counts)
-    assert frame_scan_to_count.sum() == len(simulated_precursors)
+        if ms_level == PRECURSOR_LEVEL:
+            # drt = discrete retention time
+            drt2frame = np.unique(simulated_precursors.counts.nonzero()[0])
 
-    frames = decount(frames.astype(np.uint32), frame_scan_to_count)
-    scans = decount(scans.astype(np.uint32), frame_scan_to_count)
+
+            drt_max = ??? # TODO
+            
+            # TODO: cast drts to uint16 if applicable.
+
+            frame2drt_dct = {int(frame): drt for drt, frame in enumerate(drt2frame)}
+            drt_scan_to_count = simulated_precursors.counts[drt2frame, :]
+            drts, scans, drt_scan_to_count = melt(drt_scan_to_count)
+        else:
+            # TODO: we need to still do something here, or not?
+            drts, scans, frame_scan_to_count = melt(simulated_precursors.counts)
+
+    assert drt_scan_to_count.sum() == len(simulated_precursors)
+
+    drts = decount(drts.astype(np.uint32), drt_scan_to_count)
+    scans = decount(scans.astype(np.uint32), drt_scan_to_count)
     tofs = sorted_clusters.columns.tof
     intensities = sorted_clusters.columns.intensity
-    frame_counts = count1D(frames)
+    drt_counts = count1D(drts)
 else:
     folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
     raw_data = OpenTIMS(folder_dot_d)
     chosen_frames = raw_data.ms1_frames
 
     # do we need frames at the beginning? nope. others yes, sort of.
-    cols = raw_data.query(chosen_frames, columns=("frame", "scan", "tof", "intensity"))
-    frames, scans, tofs, intensities = cols.values()
-    frame_counts = raw_data.frames["NumPeaks"][chosen_frames - 1]
+    cols = raw_data.query(chosen_frames, columns=("scan", "tof", "intensity"))
+    scans, tofs, intensities = cols.values()
+    drts_counts = raw_data.frames["NumPeaks"][chosen_frames - 1]
+    
+    drt_max = len(drts_counts)
+    unique_drts = np.arange(drt_max, dtype=get_min_int_data_type(drt_max, signed=False))
+    drts = decount(unique_drts, drts_counts)
 
 
-frame_max, scan_max, tof_max, intensity_max = map(
-    lambda v: v.max() + 1, (frames, scans, tofs, intensities)
+from sklearn.neighbors import KDTree
+
+
+X = pd.DataFrame(raw_data.query(chosen_frames, columns=("frame","scan", "tof"), copy=False))
+
+
+
+scan_max, tof_max, intensity_max = map(
+    lambda v: v.max() + 1, (scans, tofs, intensities)
 )
-# +1 needed to not go out of scope
+# +1 to remain in scope
 
+# TODO: finish frame -> drt
 
-paranoid: bool = False
 
 frame_index = get_index(frame_counts)
 event_count = frame_index[-1]
