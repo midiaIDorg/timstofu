@@ -1,6 +1,7 @@
 from numpy.typing import NDArray
 
 import itertools
+import math
 
 
 def plot_discrete_marginals(
