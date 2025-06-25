@@ -288,44 +288,56 @@ def numba_wrap(foo):
 
 
 @numba.njit
-def permute_inplace(xx, permutation, visited=None):
+def permute_inplace(
+    permutation: NDArray,
+    arrays: tuple[NDArray, ...],
+    visited: NDArray | None = None,
+) -> NDArray:
     """Apply order on orbits (cycles) of the permutation `permutation` in-place in `xx`.
 
     Likely best to do it for tables already in RAM to assure random access.
 
     Parameters
     ----------
-    xx (np.array): Array to permutate.
     permutation (np.array): Permutation of indices to apply.
+    arrays (np.array): A tuple of arrays to permutate (same dtype only...)
 
     Returns
     -------
+    np.array: a boolear array of visited places for reuse in another calls of this function or similar.
 
     np.array: Reference to the `xx` input (piping-friendliness).
     """
-    assert len(xx) == len(
+    N = None
+    assert len(arrays) > 0, "Provide at least some arrays."
+    for arr in arrays:
+        if N is None:
+            N = len(arr)
+        assert len(arr) == N
+    assert N == len(
         permutation
-    ), "Cannot apply a `permutation` if `xx` has different length."
+    ), "Shape mismatch: arrays and permutation need same 1D shape."
     if visited is None:
-        visited = np.zeros(len(xx), dtype=np.bool_)
-    else:
+        visited = np.empty(len(arr), dtype=np.bool_)
+    assert len(visited) == N
+    for arr in arrays:
         visited[:] = False
-    for i in range(len(xx)):
-        if visited[i]:
-            continue
-        if permutation[i] == i:
-            visited[i] = True
-            continue
-        j = i
-        tmp = xx[i]
-        while True:
-            visited[j] = True
-            next_j = permutation[j]
-            if next_j == i:  # cycle finished
-                xx[j] = tmp
-                break
-            xx[j] = xx[next_j]
-            j = next_j
+        for i in range(N):
+            if visited[i]:
+                continue
+            if permutation[i] == i:
+                visited[i] = True
+                continue
+            j = i
+            tmp = arr[i]
+            while True:
+                visited[j] = True
+                next_j = permutation[j]
+                if next_j == i:  # cycle finished
+                    arr[j] = tmp
+                    break
+                arr[j] = arr[next_j]
+                j = next_j
     return visited
 
 

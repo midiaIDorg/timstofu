@@ -20,6 +20,7 @@ from matplotlib.ticker import MaxNLocator
 from mmapped_df import open_dataset
 from mmapped_df import open_dataset_dct
 from numba_progress import ProgressBar
+from numpy.typing import NDArray
 from opentimspy import OpenTIMS
 from shutil import rmtree
 from tqdm import tqdm
@@ -117,12 +118,12 @@ else:
     urt_counts = raw_data.frames["NumPeaks"][urt2frame - 1]
     urt_max = len(urt_counts)
     urts = decount(
-        np.arange(urt_max, dtype=get_min_int_data_type(urt_max, signed=False)),
+        np.arange(urt_max, dtype=scans.dtype),
         urt_counts,
     )
 
 scan_max, tof_max, intensity_max = map(
-    lambda v: v.max() + 1, (scans, tofs, intensities)
+    lambda v: int(v.max() + 1), (scans, tofs, intensities)
 )
 # +1 to remain in scope
 
@@ -148,19 +149,11 @@ urt_tof_scan_order = grouped_lexargcountsort(
 if paranoid:
     assert is_permutation(urt_tof_scan_order)
 
-
-# reorder arrays at small RAM price, but only once.
-_visited = permute_inplace(scans, urt_tof_scan_order)
+_visited = permute_inplace(
+    urt_tof_scan_order, (scans, tofs, intensities)
+)  # urts too? No, they are the same as before.
 if paranoid:
-    np.all(_visited)
-_visited = permute_inplace(tofs, urt_tof_scan_order, visited=_visited)
-if paranoid:
-    np.all(_visited)
-_visited = permute_inplace(intensities, urt_tof_scan_order, visited=_visited)
-if paranoid:
-    np.all(_visited)
-
-if paranoid:
+    assert np.all(_visited)
     assert is_lex_nondecreasing(urts, tofs, scans)  # huzzzaah! sorted
 
 
@@ -356,7 +349,7 @@ tof_index = get_index(tof_counts)
 tof_scan_urt_order = grouped_lexargcountsort(
     arrays=(scans, urts),
     group_index=tof_index,
-    array_maxes=(scan_max, urt_max),
+    array_maxes=(int(scan_max), urt_max),
     # order=?, RAM OPTIMIZATION POSSIBILITY?
 )
 if paranoid:
@@ -367,7 +360,10 @@ tof_scan_urt_to_urt_tof_scan_perm = rank(
     tof_scan_urt_order
 )  # can give array now too for RAM savings.
 
+
 # reorder arrays at small RAM price, but only once.
+
+# we could allow for multiple things to permute?
 _visited = permute_inplace(scans, tof_scan_urt_order, visited=_visited)
 if paranoid:
     np.all(_visited)
@@ -377,9 +373,14 @@ if paranoid:
 _visited = permute_inplace(intensities, tof_scan_urt_order, visited=_visited)
 if paranoid:
     np.all(_visited)
+_visited = permute_inplace(urts, tof_scan_urt_order, visited=_visited)
+if paranoid:
+    np.all(_visited)
+
+# need to contruct urts here.
 
 if paranoid:
-    assert is_lex_nondecreasing(urts, tofs, scans)  # huzzzaah! sorted
+    assert is_lex_nondecreasing(tofs, scans, urts)  # huzzzaah! sorted
 
 
 # problem: we will need to likely try to extend the dims by one observation to each scan and urt
