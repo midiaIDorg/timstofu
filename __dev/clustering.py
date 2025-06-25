@@ -41,6 +41,7 @@ from timstofu.sort_and_pepper import is_lex_nondecreasing
 from timstofu.sort_and_pepper import rank
 from timstofu.stats import count1D
 from timstofu.stats import count2D
+from timstofu.stats import count2D_marginals
 from timstofu.stats import cumsum
 from timstofu.stats import get_index
 from timstofu.stats import get_unique_cnts_in_groups
@@ -328,22 +329,17 @@ plt.legend()
 plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
 plt.show()
 
-columns = [
-    "event_count",
-    # "total_ion_current",
-    "left_direct",
-    "right_direct",
-]
-df = pd.DataFrame({c: stats[c] for c in columns}, copy=False)
-
-
-def count2D_marginals(df):
-    return {
-        (col_A, col_B): count2D(df[col_A], df[col_B])
-        for col_A, col_B in itertools.combinations(df, 2)
-    }
-
-
+df = pd.DataFrame(
+    {
+        c: stats[c]
+        for c in [
+            "event_count",
+            "left_direct",
+            "right_direct",
+        ]
+    },
+    copy=False,
+)
 marginals = count2D_marginals(df)
 
 plt.matshow(marginals[("left_direct", "right_direct")][0])
