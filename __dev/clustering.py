@@ -62,10 +62,9 @@ if SIMULATED:
         simulated_sorted_clusters_path = Path(
             "/home/matteo/tmp/simulated_sorted_clusters.mmappet"
         )
-        # rmtree(simulated_sorted_clusters_path)
+        rmtree(simulated_sorted_clusters_path, ignore_errors=True)
         simulated_sorted_clusters_path.mkdir(parents=True)
-
-        # rmtree(simulated_precursors_path)
+        rmtree(simulated_precursors_path, ignore_errors=True)
         simulated_precursors_path.mkdir(parents=True)
 
         mmap_sorted_clusters = MmapedArrayValuedDict(simulated_sorted_clusters_path)
@@ -79,18 +78,14 @@ if SIMULATED:
             _zeros=mmap_simulated_precursors.zeros,
         )
 
-        frames, scans, frame_scan_to_count = melt(simulated_precursors.counts)
-        # somewhere the data gets different!
-        # TODO: this breaks:
-        assert frame_scan_to_count.sum() == len(sorted_clusters)
-        # NEED TO SOLVE THIS ISSUE.
+    frames, scans, frame_scan_to_count = melt(simulated_precursors.counts)
+    assert frame_scan_to_count.sum() == len(simulated_precursors)
 
-        frames = decount(frames.astype(np.uint32), frame_scan_to_count)
-        scans = decount(scans.astype(np.uint32), frame_scan_to_count)
-        tofs = sorted_clusters.columns.tof
-        intensities = sorted_clusters.columns.intensity
-
-        frame_counts = count1D(frames)
+    frames = decount(frames.astype(np.uint32), frame_scan_to_count)
+    scans = decount(scans.astype(np.uint32), frame_scan_to_count)
+    tofs = sorted_clusters.columns.tof
+    intensities = sorted_clusters.columns.intensity
+    frame_counts = count1D(frames)
 else:
     folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
     raw_data = OpenTIMS(folder_dot_d)
