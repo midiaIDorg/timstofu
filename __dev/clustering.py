@@ -124,11 +124,6 @@ else:
     drts = decount(unique_drts, drts_counts)
 
 
-from sklearn.neighbors import KDTree
-
-
-X = pd.DataFrame(raw_data.query(chosen_frames, columns=("frame","scan", "tof"), copy=False))
-
 
 
 scan_max, tof_max, intensity_max = map(
