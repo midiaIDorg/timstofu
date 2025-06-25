@@ -141,6 +141,32 @@ def _count2D(
 count2D = functools.wraps(_count1D)(inputs_series_to_numpy(_count2D))
 
 
+def count2D_marginals(df):
+    """Compute 2D count tables (co-occurrence matrices) for all pairs of columns in a DataFrame.
+
+    For each unique pair of columns in the input DataFrame, this function computes a 2D
+    contingency table using the `count2D` function, which should return a 2D array or
+    similar structure representing the frequency of joint occurrences of values.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        A DataFrame containing categorical or discrete data. All column pairs will be used
+        to compute joint counts.
+
+    Returns
+    -------
+    dict[tuple[str, str], Any]
+        A dictionary mapping each pair of column names `(col_A, col_B)` to the result of
+        `count2D(df[col_A], df[col_B])`. The output format of the values depends on the
+        implementation of `count2D`.
+    """
+    return {
+        (col_A, col_B): count2D(df[col_A], df[col_B])
+        for col_A, col_B in itertools.combinations(df, 2)
+    }
+
+
 @numba.njit
 def cumsum(xx):
     return np.cumsum(xx).reshape(xx.shape)
