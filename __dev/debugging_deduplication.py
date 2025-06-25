@@ -15,6 +15,7 @@ from mmapuccino import MmapedArrayValuedDict
 from timstofu.numba_helper import decount
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import melt
+from timstofu.sort_and_pepper import _is_lex_nondecreasing
 from timstofu.sort_and_pepper import is_lex_nondecreasing
 from timstofu.tofu import LexSortedClusters
 from timstofu.tofu import LexSortedDataset
@@ -42,19 +43,10 @@ sorted_clusters = LexSortedClusters.from_df(
 sorted_clusters.counts.nonzero()
 melt(sorted_clusters.counts)
 
-sorted_clusters.melt_index(very_long=False)
-sorted_clusters.melt_index(very_long=True)
-# make it into a tofu.CompactDataset method.
+(frames, scans), counts = sorted_clusters.melt_index(very_long=True, _dtype=np.uint32)
+tofs = sorted_clusters.columns.tof
+assert _is_lex_nondecreasing(frames, scans, tofs)
 
-
-
-
-
-
-
-
-
-is_lex_nondecreasing
 sorted_clusters
 
 sorted_clusters

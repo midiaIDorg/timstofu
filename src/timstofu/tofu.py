@@ -176,7 +176,7 @@ class CompactDataset:
         for i in range(len(melted) - 1):
             xx = melted[i]
             dtype = (
-                get_min_int_data_type(xx.max() + 1, signed=True)
+                get_min_int_data_type(xx.max() + 1, signed=False)
                 if _dtype is None
                 else _dtype
             )
