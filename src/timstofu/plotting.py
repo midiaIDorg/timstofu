@@ -9,6 +9,7 @@ def plot_discrete_marginals(
     show: bool = True,
     n: int | None = None,
     m: int | None = None,
+    imshow_kwargs: dict = {},
 ):
     """
     Plot a collection of 2D discrete marginal distributions in a grid of subplots.
@@ -58,10 +59,11 @@ def plot_discrete_marginals(
         ax = axes[idx if m > 1 and n > 1 else max(idx)]
         if plotting_inputs is not None:
             ((colA, colB), data) = plotting_inputs
-            ax.matshow(marginals[(colA, colB)][0])
+            ax.imshow(marginals[(colA, colB)][0], **imshow_kwargs)
             ax.set_ylabel(colA)
             ax.set_xlabel(colB)
         else:
             ax.axis("off")
     if show:
         plt.show()
+    return fig, axes

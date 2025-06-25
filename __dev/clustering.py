@@ -15,6 +15,7 @@ from math import inf
 from pathlib import Path
 
 from kilograms import scatterplot_matrix
+from matplotlib.colors import LogNorm
 from matplotlib.ticker import MaxNLocator
 from mmapped_df import open_dataset
 from mmapped_df import open_dataset_dct
@@ -239,7 +240,7 @@ def foo2(
     zz,
     intensities,
     radius,
-    # stats
+    # results
     zz_total_span,
     event_count,
     total_ion_current,
@@ -260,14 +261,17 @@ def foo2(
         right_direct[i] = max_nonzero_step_down(i, zz, radius)
 
 
-scan_neighborhood_size = 10
+scan_neighborhood_radius = 10
+scan_neighborhood_size = 2 * scan_neighborhood_radius + 1
+
+counts_dtype = get_min_int_data_type(scan_neighborhood_size, signed=False)
 stats = DotDict(
-    zz_total_span=np.zeros(dtype=np.uint32, shape=len(scans)),
-    event_count=np.zeros(dtype=np.uint32, shape=len(scans)),
+    zz_total_span=np.zeros(dtype=counts_dtype, shape=len(scans)),
+    event_count=np.zeros(dtype=counts_dtype, shape=len(scans)),
     total_ion_current=np.zeros(dtype=np.uint32, shape=len(scans)),
     is_max=np.zeros(dtype=np.bool_, shape=len(scans)),
-    left_direct=np.zeros(dtype=np.uint32, shape=len(scans)),
-    right_direct=np.zeros(dtype=np.uint32, shape=len(scans)),
+    left_direct=np.zeros(dtype=counts_dtype, shape=len(scans)),
+    right_direct=np.zeros(dtype=counts_dtype, shape=len(scans)),
 )
 with ProgressBar(total=len(urt_index) - 1, desc="Getting stats") as progress_proxy:
     unique_tofs_per_urt = map_onto_lexsorted_indexed_data(
@@ -278,14 +282,12 @@ with ProgressBar(total=len(urt_index) - 1, desc="Getting stats") as progress_pro
             scans,
             intensities,
             scan_neighborhood_size,
-            *tuple(stats.values()),
+            *tuple(stats.values()),  # results
         ),  # foo args
         progress_proxy,
     )
 
-
-event_count_size, event_count_cnt = np.unique(event_count, return_counts=True)
-
+event_count_size, event_count_cnt = np.unique(stats.event_count, return_counts=True)
 plt.scatter(event_count_size, event_count_cnt)
 plt.xlabel(
     f"Number of nonzero events in a scan neighborhood of size {2*scan_neighborhood_size+1}."
@@ -296,7 +298,7 @@ plt.ylabel("count")
 plt.show()
 
 
-tics, tics_cnt = np.unique(total_ion_current, return_counts=True)
+tics, tics_cnt = np.unique(stats.total_ion_current, return_counts=True)
 
 plt.scatter(tics, tics_cnt, s=1)
 plt.title(f"Summary for {len(tofs):_} events")
@@ -306,14 +308,14 @@ plt.yscale("log")
 plt.ylabel("COUNT")
 plt.show()
 
-np.sum(is_max)
+np.sum(stats.is_max)
 
-consecutive_size = right_direct + left_direct + 1
+consecutive_size = stats.right_direct + stats.left_direct + 1
 consecutive_sizes, consecutive_sizes_cnt = np.unique(
     consecutive_size, return_counts=True
 )
-right_sizes, right_sizes_cnt = np.unique(right_direct, return_counts=True)
-left_sizes, left_sizes_cnt = np.unique(left_direct, return_counts=True)
+right_sizes, right_sizes_cnt = np.unique(stats.right_direct, return_counts=True)
+left_sizes, left_sizes_cnt = np.unique(stats.left_direct, return_counts=True)
 
 plt.scatter(event_count_size, event_count_cnt, label="nonzero events")
 plt.scatter(
@@ -329,28 +331,26 @@ plt.legend()
 plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
 plt.show()
 
-df = pd.DataFrame(
-    {
-        c: stats[c]
-        for c in [
-            "event_count",
-            "left_direct",
-            "right_direct",
-        ]
-    },
-    copy=False,
+
+plot_discrete_marginals(
+    marginals=count2D_marginals(
+        {
+            c: stats[c]
+            for c in [
+                "event_count",
+                "left_direct",
+                "right_direct",
+            ]
+        }
+    ),
+    imshow_kwargs=dict(norm=LogNorm()),
 )
-marginals = count2D_marginals(df)
-
-plt.matshow(marginals[("left_direct", "right_direct")][0])
-plt.show()
-
 
 # plot_discrete_marginals(marginals, m=3)
 # plot_discrete_marginals(marginals, n=3)
-plot_discrete_marginals(marginals)
 
 
+# should this not use yet another data structure inheriting from CompactDataset?
 tof_counts = count1D(tofs)
 tof_index = get_index(tof_counts)
 tof_scan_urt_order = grouped_lexargcountsort(
