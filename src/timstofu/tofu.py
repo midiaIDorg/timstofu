@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from numpy.typing import NDArray
 from pathlib import Path
 from typing import Any
+from warnings import warn
 
 from dictodot import DotDict
 from mmapuccino import MmapedArrayValuedDict
@@ -23,6 +24,7 @@ from timstofu.numba_helper import split_args_into_K
 from timstofu.numba_helper import to_numpy
 from timstofu.numba_helper import write_orderly
 
+from timstofu.sort_and_pepper import _is_lex_nondecreasing
 from timstofu.sort_and_pepper import argcountsort3D
 from timstofu.sort_and_pepper import deduplicate
 from timstofu.sort_and_pepper import is_lex_nondecreasing
@@ -194,6 +196,13 @@ class CompactDataset:
             assert size == len(xx)
             res.append(xx)
         return tuple(res), counts
+
+    def is_sorted(self):
+        warn(
+            "This function is not optimized. Ask Matteo to do this. And it uses a specific column from columns."
+        )
+        (xx, yy), counts = self.melt_index(very_long=True, _dtype=np.uint32)
+        return _is_lex_nondecreasing(xx, yy, self.columns.tof)
 
     def to_npz(self, output_path: str, compress: bool = True) -> None:
         """Save to npz format (including columns)."""
