@@ -204,6 +204,27 @@ class CompactDataset:
         (xx, yy), counts = self.melt_index(very_long=True, _dtype=np.uint32)
         return _is_lex_nondecreasing(xx, yy, self.columns.tof)
 
+    def cut_counts(self, cut_rows: bool = True) -> CompactDataset:
+        """Cut the counts to repeatedly appearing non-zero rows (columns).
+
+        This function does not need to return a memmap. Only new counts and index will be store in RAM.
+
+        Parameters:
+            cut_rows (bool): Set to True (default), we retain only rows, if False: non-empty columns.
+
+        Returns:
+            CompactDataset: New CompactDataset sharing the allocation of columns with the old one.
+        """
+        xx = self.counts.any(axis=int(cut_rows)).nonzero()[0]
+        unique_diffs, cnts = np.unique(np.diff(xx), return_counts=True)
+        most_frequent_diff = unique_diffs[cnts.argmax()]
+        assert (
+            most_frequent_diff == unique_diffs.min()
+        ), "Most frequent diff is not the smallest one."
+        indices = np.r_[xx[0] : xx[-1] : most_frequent_diff]
+        new_counts = np.take(self.counts, indices, axis=1 - cut_rows)
+        return self.__class__(counts=new_counts, columns=self.columns)
+
     def to_npz(self, output_path: str, compress: bool = True) -> None:
         """Save to npz format (including columns)."""
         (np.savez_compressed if compress else np.savez)(

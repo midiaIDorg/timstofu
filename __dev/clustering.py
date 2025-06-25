@@ -69,7 +69,7 @@ if False:
         simulated_sorted_clusters_path = Path(
             "/home/matteo/tmp/simulated_sorted_clusters.mmappet"
         )
-        
+
         rmtree(simulated_sorted_clusters_path, ignore_errors=True)
         simulated_sorted_clusters_path.mkdir(parents=True)
         rmtree(simulated_precursors_path, ignore_errors=True)
@@ -87,17 +87,18 @@ if False:
         )
 
         if ms_level == PRECURSOR_LEVEL:
+            simulated_precursors.cut_counts()
+
             # drt = discrete retention time
-            drt2frame = np.unique(simulated_precursors.counts.nonzero()[0])
-
-
-            drt_max = ??? # TODO
-            
-            # TODO: cast drts to uint16 if applicable.
-
+            (frames, scans), counts = simulated_precursors.melt_index()
+            drt2frame = np.unique(frames)
+            drt_max = len(drt2frame)
             frame2drt_dct = {int(frame): drt for drt, frame in enumerate(drt2frame)}
             drt_scan_to_count = simulated_precursors.counts[drt2frame, :]
             drts, scans, drt_scan_to_count = melt(drt_scan_to_count)
+
+            # TODO: make a method that goes from one datatype to another?
+
         else:
             # TODO: we need to still do something here, or not?
             drts, scans, frame_scan_to_count = melt(simulated_precursors.counts)
@@ -118,12 +119,10 @@ else:
     cols = raw_data.query(chosen_frames, columns=("scan", "tof", "intensity"))
     scans, tofs, intensities = cols.values()
     drts_counts = raw_data.frames["NumPeaks"][chosen_frames - 1]
-    
+
     drt_max = len(drts_counts)
     unique_drts = np.arange(drt_max, dtype=get_min_int_data_type(drt_max, signed=False))
     drts = decount(unique_drts, drts_counts)
-
-
 
 
 scan_max, tof_max, intensity_max = map(
