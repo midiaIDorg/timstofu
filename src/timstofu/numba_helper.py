@@ -320,6 +320,7 @@ def permute_inplace(
     if visited is None:
         visited = np.empty(len(arr), dtype=np.bool_)
     assert len(visited) == N
+    # Can this be done with one set of values instead? But that would likely cause cache-misses.
     for arr in arrays:
         visited[:] = False
         for i in range(N):
@@ -345,7 +346,7 @@ def test_permute_inplace():
     xx = np.random.permutation(1000)
     yy = xx.copy()
     permutation = np.argsort(xx)
-    _visited = permute_inplace(yy, permutation)
+    _visited = permute_inplace(permutation, (yy,))
     assert np.all(_visited)
     np.testing.assert_equal(yy, xx[permutation])
 
