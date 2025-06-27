@@ -67,6 +67,22 @@ def horner(arrays: tuple[NDArray], maxes: tuple[int], res: NDArray | None) -> ND
     return res
 
 
+@numba.njit
+def unpack3D(x, max1, max2):
+    c = x % max2
+    x //= max2
+    b = x % max1
+    x //= max1
+    return c, b, x
+
+
+@numba.njit
+def unpack(x, maxes):
+    for m in maxes[::-1]:
+        yield x % m
+        x //= m
+
+
 ## Funny: operator.mod worked, but own function did not work.
 # def make_divmod(foo):
 #     def real_foo(

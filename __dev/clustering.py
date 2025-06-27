@@ -135,19 +135,31 @@ pivot.col2max
 pivot.array
 
 
-def test_Pivot():
-    N = 100
-    max_A = 40
-    max_B = 20
-    max_C = 10
-    maxes = dict(A=max_A, B=max_B, C=max_C)
-    inputs = {c: np.random.choice(_max, size=N) for c, _max in maxes.items()}
-    pivot = Pivot.new(**inputs)
-    np.testing.assert_equal( pivot.array, (inputs["A"] * max_B + inputs["B"])*max_C + inputs["C"])
-    for c in maxes:
-        np.testing.assert_equal(pivot.extract(c), inputs[c])
-    assert pivot.col2max == maxes
+# I am missing local decoding for array: something working on array entry and given it and maxes makes the hole lot of love.
 
+x = pivot.array[0]
+maxes = pivot.maxes
+
+
+@numba.njit
+def unpack3(x, max1, max2):
+    c = x % max2
+    x //= max2
+    b = x % max1
+    x //= max1
+    return c,b,x
+
+@numba.njit
+def unpack(x, maxes):
+    for m in maxes[::-1]:
+        yield x % m
+        x //= m
+        
+%%timeit
+c,b,a = unpack(x, maxes)
+
+%%timeit
+c,b,a = unpack3(x, maxes[1], maxes[2])
 
 
 
