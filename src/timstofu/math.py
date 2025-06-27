@@ -110,6 +110,62 @@ def unpack_np(x, maxes):
     return res
 
 
+@numba.njit(boundscheck=True)
+def max_nonzero_up(i, xx, radius):
+    i = np.intp(i)
+    N = len(xx)
+    x_prev = xx[i]
+    for j in range(radius):
+        p = i + j + 1
+        if p == N:
+            return j
+        x = xx[p]
+        if x != x_prev + 1:
+            return j
+        x_prev = x
+    return j
+
+
+@numba.njit(boundscheck=True)
+def max_nonzero_down(i, xx, radius):
+    i = np.intp(i)
+    N = len(xx)
+    x_prev = xx[i]
+    for j in range(radius):
+        p = i - j - 1
+        if p < 0:
+            return j
+        x = xx[p]
+        if x + 1 < x_prev:
+            return j
+        x_prev = x
+    return j
+
+
+@numba.njit
+def sum_weights(weights, left, right):
+    r = 0
+    for i in range(left, right):
+        r += weights[i]
+    return r
+
+
+def test_max_nonzero():
+    xx = np.array([1, 2, 5, 6, 7, 8, 10, 12, 123], dtype=np.uint32)
+    i = 3
+    assert xx[i + max_nonzero_up(i, xx, 3)] == 8
+    assert xx[i - max_nonzero_down(i, xx, 3)] == 5
+
+    xx = np.array([1, 2, 5, 6, 7, 8, 10, 12, 123], dtype=np.uint32)
+    i = 0
+    assert xx[i + max_nonzero_up(i, xx, 3)] == 2
+    assert xx[max_nonzero_down(i, xx, 3)] == 1
+
+    i = len(xx) - 1
+    assert xx[i + max_nonzero_up(i, xx, 3)] == xx[-1]
+    assert xx[i - max_nonzero_down(i, xx, 3)] == 123
+
+
 ## Funny: operator.mod worked, but own function did not work.
 # def make_divmod(foo):
 #     def real_foo(

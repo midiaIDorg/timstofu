@@ -29,6 +29,9 @@ from dictodot import DotDict
 from mmapuccino import MmapedArrayValuedDict
 from mmapuccino import empty
 
+from timstofu.math import max_nonzero_down
+from timstofu.math import max_nonzero_up
+from timstofu.math import sum_weights
 from timstofu.numba_helper import decount
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import is_arange
@@ -131,7 +134,7 @@ intensity_max = intensities.max()
 urt_scan_tof = Pivot.new(
     urt=urts,
     scan=scans,
-    tof=tofs,    
+    tof=tofs,
 )
 if paranoid:
     urt_scan_tof_order = urt_scan_tof.argsort(urt=urt_index)
@@ -146,11 +149,11 @@ if paranoid:
 
 save_ram = False
 if save_ram:
-    urt_tof_scan = urt_scan_tof.repivot(("urt","tof","scan"))
+    urt_tof_scan = urt_scan_tof.repivot(("urt", "tof", "scan"))
 else:
     urt_tof_scan = Pivot.new(
         urt=urts,
-        tof=tofs,    
+        tof=tofs,
         scan=scans,
     )
 
@@ -163,132 +166,6 @@ urt_tof_scan.permute(urt_tof_scan_order)
 
 if paranoid:
     assert is_permutation(urt_tof_scan_order)
-
-# conveniently represent all of the data this way and then play with that and the indexes: decoding.
-from timstofu.numba_helper import permute_into
-from timstofu.sort_and_pepper import horner
-
-scan_tof_intensity = np.empty(
-    shape=len(intensities),
-    dtype=get_min_int_data_type(tof_max * scan_max * intensity_max)
-)
-horner((scans, tofs, intensities), (scan_max, tof_max, intensity_max), 0, len(scan_tof_intensity), scan_tof_intensity)
-# 147ms
-# uint64_max_size = 18_446_744_073_709_551_615
-
-
-%%time
-permute_inplace(combined, urt_tof_scan_order)
-
-%%timeit# this is like orders of magnitude faster. fuck RAM for now.
-scan_tof_intensity[urt_tof_scan_order]
-# 682ms
-
-
-permute_into(scan_tof_intensity, urt_tof_scan_order, scan_tof_intensity)
-# 145ms
-
-# so we can definitely do it fast. 
-# we likely need to be able to extract given dimensions too.
-# and repivot.
-# and exchange a dimension.
-# and unpack stored dims.
-
-
-
-
-
-# we could use some arena.
-
-
-pivot = Pivot.new(scan=scans, tof=tofs, intensity=intensities)
-pivot.permute(urt_tof_scan_order)
-pivot.reorder()
-
-pivot.array
-pivot.columns
-pivot.maxes
-# TODO: is sorting done the right direction?
-
-# now, the idea behind redoing
-# why not do this 
-
-# this is sort of vectorized too?
-@numba.njit
-def horner_around_corner(coefs, maxes, result=0):
-    for coef, max_coef in zip(coefs, maxes):
-        result *= max_coef
-        result += coef
-    return result
-
-
-coefs = (
-    np.random.permutation(100).astype(np.uint32), 
-    np.random.permutation(100).astype(np.uint32),
-    np.random.permutation(100).astype(np.uint32),
-)
-result = np.zeros(100, dtype=np.uint64)
-horner_around_corner(
-    coefs,
-    np.array([100,100,100], dtype=np.uint32),
-    result,
-)
-
-
-horner_around_corner(
-    (urts, scans, tofs),
-    np.array((urt_max, scan_max, tof_max), dtype=np.uint32),
-)
-
-
-results = np.zeros(shape=len(urts), dtype=np.uintp)
-horner((urts, scans, tofs), (urt_max, scan_max, tof_max), 0, len(intensities), results)
-
-r = horner_around_corner((10,12,14), (100,100,100))
-print(r)
-
-10 % 5
-10 // 5
-
-
-# will this not work also on numpy arrays as inputs?
-@numba.njit
-def renroh(num, maxes, results):
-    for i in range(len(maxes))
-    for rev_max in reversed_maxes:
-        num, res = divmod(num, rev_max)
-    divmod(num, maxes)
-
-
-
-# is the solution not: merge all extra dims into 1 array?
-# then we can always repivot the data.
-# we now know scans are small, urts too (for precursors)
-# only intensities and tofs are trouble makers.
-
-
-# %%time# 12"
-# Can it be faster? perhaps no need to do that for things we can count, like scans?
-%%time
-_visited = permute_inplace(
-    urt_tof_scan_order, (scans, tofs, intensities)
-)  # urts too? No, they are the same as before. 
-
-# faster if we make copies. faster if multithreaded?
-# need to check it out.
-
-%%time
-intensities[urt_tof_scan_order]
-
-
-if paranoid:
-    assert np.all(_visited)
-    assert is_lex_nondecreasing(urts, tofs, scans)  # huzzzaah! sorted
-
-# Es gibt nicht viel zu retten. Andere ihm umschmeicheln.
-# Sie konnen ohne USA nicht viel erledigen.
-# Sie sind an USA angewiesen.
-# Wir haben uns diese
 
 
 # now, another approach: do local 3D peak counts and intensity sums.
@@ -303,11 +180,7 @@ if paranoid:
 # plt.show()
 
 
-# too many points of change for urt,tof = 90M
-# urt_tof_to_change, tofs_per_urt = get_index_2D(urt_index, tofs)
-
-
-# trivial example
+# trivial example: still works (provided we want to use tofs this way. but why not)
 def test():
     @numba.njit
     def foo1(s, e, res):
@@ -329,35 +202,7 @@ def test():
     return res
 
 
-@numba.njit(boundscheck=True)
-def max_nonzero_step_up(i, xx, radius):
-    x_prev = xx[i]
-    for j in range(0, radius):
-        x = xx[i + j + 1]
-        if x > x_prev + 1:
-            break
-        x_prev = x
-    return j
-
-
-@numba.njit(boundscheck=True)
-def max_nonzero_step_down(i, xx, radius):
-    i = np.intp(i)
-    x_prev = xx[i]
-    for j in range(0, radius):
-        x = xx[i - j - 1]
-        if x + 1 < x_prev:
-            break
-        x_prev = x
-    return j
-
-
-@numba.njit
-def get_total_ion_current(intensities, left, right):
-    tic = 0
-    for i in range(left, right):
-        tic += intensities[i]
-    return tic
+test()
 
 
 @numba.njit
@@ -369,24 +214,24 @@ def foo2(
     intensities,
     radius,
     # results
-    zz_total_span,
+    total_span,
     event_count,
-    total_ion_current,
+    tic,
     is_max,
-    left_direct,
-    right_direct,
+    down,
+    up,
 ):
     left = s
     right = s
     for i in range(s, e):
-        zz_total_span[i] = e - s
+        total_span[i] = e - s
         # zz sorted -> can update left and right at will without errors
         left, right = get_window_borders(i, e, zz, radius, left, right)
         event_count[i] = right - left
-        total_ion_current[i] = get_total_ion_current(intensities, left, right)
+        tic[i] = sum_weights(intensities, left, right)
         is_max[i] = max_around(intensities, i, left, right) == intensities[i]
-        left_direct[i] = max_nonzero_step_up(i, zz, radius)
-        right_direct[i] = max_nonzero_step_down(i, zz, radius)
+        down[i] = max_nonzero_down(i, zz, radius)
+        up[i] = max_nonzero_up(i, zz, radius)
 
 
 scan_neighborhood_radius = 10
@@ -394,12 +239,12 @@ scan_neighborhood_size = 2 * scan_neighborhood_radius + 1
 
 counts_dtype = get_min_int_data_type(scan_neighborhood_size, signed=False)
 stats = DotDict(
-    zz_total_span=np.zeros(dtype=counts_dtype, shape=len(scans)),
-    event_count=np.zeros(dtype=counts_dtype, shape=len(scans)),
-    total_ion_current=np.zeros(dtype=np.uint32, shape=len(scans)),
-    is_max=np.zeros(dtype=np.bool_, shape=len(scans)),
-    left_direct=np.zeros(dtype=counts_dtype, shape=len(scans)),
-    right_direct=np.zeros(dtype=counts_dtype, shape=len(scans)),
+    scan_total_span=np.zeros(dtype=counts_dtype, shape=len(scans)),
+    scan_event_count=np.zeros(dtype=counts_dtype, shape=len(scans)),
+    scan_tic=np.zeros(dtype=np.uint32, shape=len(scans)),
+    scan_is_max=np.zeros(dtype=np.bool_, shape=len(scans)),
+    scan_down=np.zeros(dtype=counts_dtype, shape=len(scans)),
+    scan_up=np.zeros(dtype=counts_dtype, shape=len(scans)),
 )
 with ProgressBar(total=len(urt_index) - 1, desc="Getting stats") as progress_proxy:
     unique_tofs_per_urt = map_onto_lexsorted_indexed_data(
@@ -407,13 +252,14 @@ with ProgressBar(total=len(urt_index) - 1, desc="Getting stats") as progress_pro
         tofs,
         foo2,
         (  # foo args
-            scans,
+            scans,  # zz
             intensities,
-            scan_neighborhood_size,
+            scan_neighborhood_radius,
             *tuple(stats.values()),  # results
         ),  # foo args
         progress_proxy,
     )
+# are those correct stans and intensities? no...
 
 event_count_size, event_count_cnt = np.unique(stats.event_count, return_counts=True)
 plt.scatter(event_count_size, event_count_cnt)

@@ -145,6 +145,9 @@ class Pivot:
             out,
         )
 
+    def __getitem__(self, column) -> NDArray:
+        return self.extract(column)
+
 
 def test_Pivot():
     N = 100
