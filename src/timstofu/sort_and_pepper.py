@@ -2,10 +2,10 @@ import functools
 import math
 import numba
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 
 from numba_progress import ProgressBar
+from numpy.typing import NDArray
 
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import inputs_series_to_numpy
@@ -32,7 +32,7 @@ is_nondecreasing = inputs_series_to_numpy(_is_nondecreasing)
 
 
 @numba.njit
-def _is_lex_nondecreasing(*arrays: npt.NDArray) -> bool:
+def _is_lex_nondecreasing(*arrays: NDArray) -> bool:
     N = len(arrays[0])
     for arr in arrays:
         assert len(arr) == N
@@ -58,7 +58,7 @@ def test_is_lex_nondecreasing():
 
 
 @numba.njit
-def _is_lex_strictly_increasing(*arrays: npt.NDArray) -> bool:
+def _is_lex_strictly_increasing(*arrays: NDArray) -> bool:
     N = len(arrays[0])
     for arr in arrays:
         assert len(arr) == N
@@ -87,13 +87,13 @@ is_lex_strictly_increasing = inputs_series_to_numpy(_is_lex_strictly_increasing)
 
 @numba.njit(boundscheck=True)
 def deduplicate(
-    sorted_tofs: npt.NDArray,
-    sorted_intensities: npt.NDArray,
-    nondeduplicated_counts: npt.NDArray,
+    sorted_tofs: NDArray,
+    sorted_intensities: NDArray,
+    nondeduplicated_counts: NDArray,
     deduplicated_event_count: int,
     progress_proxy: ProgressBar | None = None,
-    dedup_tofs: npt.NDArray | None = None,
-    dedup_intensities: npt.NDArray | None = None,
+    dedup_tofs: NDArray | None = None,
+    dedup_intensities: NDArray | None = None,
 ):
     """
     Deduplicates time-of-flight (TOF) and intensity data by aggregating intensities
@@ -179,9 +179,9 @@ def deduplicate(
 
 @numba.njit(boundscheck=True)
 def _lexargcountsort2D(
-    xx: npt.NDArray,
-    yy: npt.NDArray,
-    x_y_to_cumsum: npt.NDArray,
+    xx: NDArray,
+    yy: NDArray,
+    x_y_to_cumsum: NDArray,
     copy: bool = True,
 ):
     """Get the order sorting xx and yy lexicographically.
@@ -215,7 +215,7 @@ def _lexargcountsort2D(
 
 @functools.wraps(_lexargcountsort2D)
 @inputs_series_to_numpy
-def lexargcountsort2D(xx: npt.NDArray, yy: npt.NDArray, *args):
+def lexargcountsort2D(xx: NDArray, yy: NDArray, *args):
     assert np.issubdtype(xx.dtype, np.integer)
     assert np.issubdtype(yy.dtype, np.integer)
     return _lexargcountsort2D(xx, yy, *args)
@@ -244,12 +244,12 @@ def test_lexargcountsort2D():
 
 @numba.njit(boundscheck=True)
 def lexargcountsort2D_to_3D(
-    xy_to_first_idx: npt.NDArray,
-    xy_to_count: npt.NDArray,
-    xy_presorted_zz: npt.NDArray,
-    xy_order: npt.NDArray,
+    xy_to_first_idx: NDArray,
+    xy_to_count: NDArray,
+    xy_presorted_zz: NDArray,
+    xy_order: NDArray,
     copy: bool = True,
-) -> npt.NDArray:
+) -> NDArray:
     """Complete the sort."""
     xy_to_xyz_order = (
         np.empty(
@@ -271,11 +271,11 @@ def lexargcountsort2D_to_3D(
 # TODO: make it possible to use user allocated arrays for results
 @inputs_series_to_numpy
 def argcountsort3D(
-    xx: npt.NDArray | pd.Series,
-    yy: npt.NDArray | pd.Series,
-    zz: npt.NDArray | pd.Series,
+    xx: NDArray | pd.Series,
+    yy: NDArray | pd.Series,
+    zz: NDArray | pd.Series,
     return_counts: bool = False,
-) -> npt.NDArray | tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
+) -> NDArray | tuple[NDArray, NDArray, NDArray]:
     """Get the order sorting any array as long as the provided integer arrays lexicographically by xx, yy, and zz.
 
     Parameters
@@ -352,7 +352,7 @@ def test_count_unique_for_indexed_data():
 
 
 @numba.njit
-def rank(order, ranks: npt.NDArray | None = None):
+def rank(order, ranks: NDArray | None = None):
     if ranks is None:
         ranks = np.empty(len(order), dtype=np.int32)
     assert len(ranks) == len(order)
@@ -439,9 +439,9 @@ def merge_uints(arrays, maxes, res):
 
 @numba.njit(boundscheck=True)
 def lexargcountsort(
-    xx: npt.NDArray,
-    xx_cumsum: npt.NDArray,
-    order: npt.NDArray | None = None,
+    xx: NDArray,
+    xx_cumsum: NDArray,
+    order: NDArray | None = None,
     copy_cumsum: bool = True,
 ):
     """Get the order sorting xx by values in group_index."""
@@ -473,7 +473,6 @@ def zip_uints_into_bigger_uint(
     results,
 ):
     """Zip uints into a bigger int using Horner scheme."""
-    assert start_idx <= end_idx
     assert end_idx <= len(results)
     for i in range(start_idx, end_idx):
         results[i] = 0
@@ -483,7 +482,7 @@ def zip_uints_into_bigger_uint(
 
 
 @numba.njit(boundscheck=True, parallel=True)
-def _countlexargsort(arrays, array_maxes, group_index, order) -> npt.NDArray:
+def _countlexargsort(arrays, array_maxes, group_index, order) -> NDArray:
     """Sort arrays.
 
     Parameters
@@ -504,23 +503,158 @@ def _countlexargsort(arrays, array_maxes, group_index, order) -> npt.NDArray:
     return order
 
 
+@numba.njit(parallel=True)
+def zip_uints_into_bigger_uint_2D(
+    xx,
+    yy,
+    y_max,
+    start_idx,
+    end_idx,
+    results,
+):
+    """Zip uints into a bigger int using Horner scheme.
+
+    Specialized to 2 arrays only, for then they can have different types."""
+    assert end_idx <= len(results)
+    for i in numba.prange(start_idx, end_idx):
+        r = xx[i]
+        r *= y_max
+        r += yy[i]
+        results[i] = r
+
+
+@numba.njit(parallel=True)
+def zip_uints_into_bigger_uint_3D(
+    xx,
+    yy,
+    zz,
+    x_max,
+    y_max,
+    start_idx,
+    end_idx,
+    results,
+):
+    """Zip uints into a bigger int using Horner scheme.
+
+    Specialized to 2 arrays only, for then they can have different types."""
+    assert end_idx <= len(results)
+    for i in numba.prange(start_idx, end_idx):
+        results[i] = (xx[i] * x_max + yy[i]) * y_max + zz[i]
+
+
+@numba.njit(parallel=True)
+def zip_uints_into_bigger_uint_4D(
+    xx,
+    yy,
+    zz,
+    ww,
+    x_max,
+    y_max,
+    z_max,
+    start_idx,
+    end_idx,
+    results,
+):
+    """Zip uints into a bigger int using Horner scheme.
+
+    Specialized to 2 arrays only, for then they can have different types."""
+    assert end_idx <= len(results)
+    for i in numba.prange(start_idx, end_idx):
+        results[i] = (xx[i] * x_max + yy[i]) * y_max + zz[i]
+
+
+horner_schemes = {
+    2: zip_uints_into_bigger_uint_2D,
+    3: zip_uints_into_bigger_uint_3D,
+    4: zip_uints_into_bigger_uint_4D,
+}
+
+
+def horner(arrays, maxes, start_idx, end_idx, results):
+    assert len(arrays) == len(maxes)
+    assert end_idx <= len(results)
+    assert start_idx >= 0
+    horner_scheme = horner_schemes.get(len(arrays), None)
+    if horner_scheme is None:
+        zip_uints_into_bigger_uint(arrays, maxes, start_idx, end_idx, results)
+    else:
+        horner_scheme(*arrays, *maxes[:-1], start_idx, end_idx, results)
+    return results
+
+
+@numba.njit(boundscheck=True, parallel=True)
+def _countlexargsort(arrays, array_maxes, group_index, order) -> NDArray:
+    """Sort arrays.
+
+    Parameters
+    ----------
+    arrays (tuple): A tuple of arrays to be argsorted, grouped by index.
+    grouped_index (np.array): 1D array with counts, one field larger than the number of different values of the grouper.
+
+    Notes
+    -----
+    `group_index[i]:group_index[i+1]` returns a view into all members of the i-th group.
+    """
+    assert len(arrays) > 0
+    for i in numba.prange(len(group_index) - 1):
+        s = group_index[i]
+        e = group_index[i + 1]
+        zip_uints_into_bigger_uint(arrays, array_maxes, s, e, order)
+        order[s:e] = s + np.argsort(order[s:e])
+    return order
+
+
+@numba.njit(boundscheck=True, parallel=True)
+def _countlexargsort_2D(
+    xx: NDArray, yy: NDArray, y_max: int, group_index: NDArray, order: NDArray
+) -> NDArray:
+    """Sort arrays.
+
+    Parameters
+    ----------
+    xx, yy (np.array): Arrays to be argsorted, grouped by index.
+    grouped_index (np.array): 1D array with counts, one field larger than the number of different values of the grouper.
+    order (np.array): Place to store results.
+
+    Notes
+    -----
+    `group_index[i]:group_index[i+1]` returns a view into all members of the i-th group.
+    """
+    for i in numba.prange(len(group_index) - 1):
+        s = group_index[i]
+        e = group_index[i + 1]
+        zip_uints_into_bigger_uint_2D(xx, yy, y_max, s, e, order)
+        order[s:e] = s + np.argsort(order[s:e])
+    return order
+
+
 def grouped_lexargcountsort(
-    arrays: tuple[npt.NDArray, ...],
-    group_index: npt.NDArray,
+    arrays: tuple[NDArray, ...],
+    group_index: NDArray,
     array_maxes: tuple[int, ...] | None = None,
-    order: npt.NDArray | None = None,
+    order: NDArray | None = None,
 ):
     assert len(group_index.shape) == 1
     size = group_index[-1]
+    dtypes = set()
     for arr in arrays:
         assert len(arr.shape) == 1, "Arrays must be 1D."
         assert len(arr) == size, "Arrays must be equaly sized."
         assert arr.dtype in np_uints, "Arrays must be some version of np.uint"
+        dtypes.add(arr.dtype)
+
+    array_maxes = tuple(arr.max() for arr in arrays)
     if order is None:
         order = np.empty(
             shape=size,
             dtype=get_min_int_data_type(math.prod(array_maxes)),
         )
-    if array_maxes is None:
-        array_maxes = (arr.max() for arr in arrays)
+
+    if len(arrays) == 2:
+        xx, yy = arrays
+        y_max = array_maxes[1]
+        return _countlexargsort_2D(xx, yy, y_max, group_index, order)
+
+    assert len(dtypes) == 1, "Submitted arrays must have the same dtype."
+
     return _countlexargsort(arrays, array_maxes, group_index, order)

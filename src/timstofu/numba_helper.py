@@ -287,58 +287,50 @@ def numba_wrap(foo):
     }
 
 
+# TODO: roll back to previous function and write a python wrapper simply.
+# Also: this definitely can be done withing groups.
+# So we can still use index.
 @numba.njit
 def permute_inplace(
+    array: tuple[NDArray, ...],
     permutation: NDArray,
-    arrays: tuple[NDArray, ...],
     visited: NDArray | None = None,
 ) -> NDArray:
-    """Apply order on orbits (cycles) of the permutation `permutation` in-place in `xx`.
+    """Apply order on orbits (cycles) of the permutation `permutation` in-place on `array`.
 
     Likely best to do it for tables already in RAM to assure random access.
 
     Parameters
     ----------
+    array (np.array): An array to permutate in-place.
     permutation (np.array): Permutation of indices to apply.
-    arrays (np.array): A tuple of arrays to permutate (same dtype only...)
 
     Returns
     -------
     np.array: a boolear array of visited places for reuse in another calls of this function or similar.
-
-    np.array: Reference to the `xx` input (piping-friendliness).
     """
-    N = None
-    assert len(arrays) > 0, "Provide at least some arrays."
-    for arr in arrays:
-        if N is None:
-            N = len(arr)
-        assert len(arr) == N
-    assert N == len(
-        permutation
-    ), "Shape mismatch: arrays and permutation need same 1D shape."
+    N = len(array)
     if visited is None:
-        visited = np.empty(len(arr), dtype=np.bool_)
-    assert len(visited) == N
-    # Can this be done with one set of values instead? But that would likely cause cache-misses.
-    for arr in arrays:
-        visited[:] = False
-        for i in range(N):
-            if visited[i]:
-                continue
-            if permutation[i] == i:
-                visited[i] = True
-                continue
-            j = i
-            tmp = arr[i]
-            while True:
-                visited[j] = True
-                next_j = permutation[j]
-                if next_j == i:  # cycle finished
-                    arr[j] = tmp
-                    break
-                arr[j] = arr[next_j]
-                j = next_j
+        visited = np.empty(N, dtype=np.bool_)
+    else:
+        assert len(visited) == N
+    visited[:] = False
+    for i in range(N):
+        if visited[i]:
+            continue
+        if permutation[i] == i:
+            visited[i] = True
+            continue
+        j = i
+        tmp = array[i]
+        while True:
+            visited[j] = True
+            next_j = permutation[j]
+            if next_j == i:  # cycle finished
+                array[j] = tmp
+                break
+            array[j] = array[next_j]
+            j = next_j
     return visited
 
 
@@ -349,6 +341,15 @@ def test_permute_inplace():
     _visited = permute_inplace(permutation, (yy,))
     assert np.all(_visited)
     np.testing.assert_equal(yy, xx[permutation])
+
+
+@numba.njit(parallel=True)
+def permute_into(xx: NDArray, permutation: NDArray, yy: NDArray | None = None):
+    if yy is None:
+        yy = np.empty(shape=xx.shape, dtype=xx.dtype)
+    for i in numba.prange(len(xx)):
+        yy[i] = xx[permutation[i]]
+    return yy
 
 
 @numba.njit(boundscheck=True, parallel=True)

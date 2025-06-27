@@ -37,6 +37,7 @@ from timstofu.numba_helper import map_onto_lexsorted_indexed_data
 from timstofu.numba_helper import melt
 from timstofu.numba_helper import permute_inplace
 from timstofu.numba_helper import test_foo_for_map_onto_lexsorted_indexed_data
+from timstofu.pivot import Pivot
 from timstofu.plotting import plot_discrete_marginals
 from timstofu.sort_and_pepper import grouped_lexargcountsort
 from timstofu.sort_and_pepper import is_lex_nondecreasing
@@ -122,39 +123,218 @@ else:
         urt_counts,
     )
 
+
+pivot = Pivot.new(
+    urt=urts,
+    scan=scans,
+    tof=tofs,    
+)
+pivot.maxes
+pivot.columns
+pivot.col2max
+pivot.array
+
+
+def test_Pivot():
+    N = 100
+    max_A = 40
+    max_B = 20
+    max_C = 10
+    maxes = dict(A=max_A, B=max_B, C=max_C)
+    inputs = {c: np.random.choice(_max, size=N) for c, _max in maxes.items()}
+    pivot = Pivot.new(**inputs)
+    np.testing.assert_equal( pivot.array, (inputs["A"] * max_B + inputs["B"])*max_C + inputs["C"])
+    for c in maxes:
+        np.testing.assert_equal(pivot.extract(c), inputs[c])
+    assert pivot.col2max == maxes
+
+
+
+
+%%timeit
+_grouped_argsort(pivot.array, urt_index, order)
+
+
+@numba.njit(boundscheck=True, parallel=True)
+def _grouped_argsort(
+    xx: NDArray, group_index: NDArray, order: NDArray
+) -> NDArray:
+    """Sort arrays.
+
+    Parameters
+    ----------
+    xx (np.array): Array to be argsorted, grouped by index.
+    grouped_index (np.array): 1D array with counts, one field larger than the number of different values of the grouper.
+    order (np.array): Place to store results.
+
+    Notes
+    -----
+    `group_index[i]:group_index[i+1]` returns a view into all members of the i-th group.
+    """
+    for i in numba.prange(len(group_index) - 1):
+        s = group_index[i]
+        e = group_index[i + 1]
+        order[s:e] = s + np.argsort(xx[s:e])
+
+
+
+
 scan_max, tof_max, intensity_max = map(
     lambda v: int(v.max() + 1), (scans, tofs, intensities)
-)
-# +1 to remain in scope
+) # +1 to remain in scope
 
 
-urt_index = get_index(urt_counts)
-event_count = urt_index[-1]
 if paranoid:
     urt_scan_tof_order = grouped_lexargcountsort(
         arrays=(scans, tofs),
         group_index=urt_index,
-        array_maxes=(scan_max, tof_max),
     )
     assert is_lex_nondecreasing(urt_scan_tof_order)
     assert urt_scan_tof_order[0] == 0
-    assert urt_scan_tof_order[-1] == event_count - 1
+    assert urt_scan_tof_order[-1] == urt_index[-1] - 1
+
+
+# there are too many argsorts I already have now.
+# there should be only one with array and index.
+
+
+
+
 
 urt_tof_scan_order = grouped_lexargcountsort(
     arrays=(tofs, scans),
     group_index=urt_index,
-    array_maxes=(tof_max, scan_max),
     # order=?, RAM OPTIMIZATION POSSIBILITY?
 )
+
 if paranoid:
     assert is_permutation(urt_tof_scan_order)
 
+# conveniently represent all of the data this way and then play with that and the indexes: decoding.
+from timstofu.numba_helper import permute_into
+from timstofu.sort_and_pepper import horner
+
+scan_tof_intensity = np.empty(
+    shape=len(intensities),
+    dtype=get_min_int_data_type(tof_max * scan_max * intensity_max)
+)
+horner((scans, tofs, intensities), (scan_max, tof_max, intensity_max), 0, len(scan_tof_intensity), scan_tof_intensity)
+# 147ms
+# uint64_max_size = 18_446_744_073_709_551_615
+
+
+%%time
+permute_inplace(combined, urt_tof_scan_order)
+
+%%timeit# this is like orders of magnitude faster. fuck RAM for now.
+scan_tof_intensity[urt_tof_scan_order]
+# 682ms
+
+
+permute_into(scan_tof_intensity, urt_tof_scan_order, scan_tof_intensity)
+# 145ms
+
+# so we can definitely do it fast. 
+# we likely need to be able to extract given dimensions too.
+# and repivot.
+# and exchange a dimension.
+# and unpack stored dims.
+
+
+
+
+
+# we could use some arena.
+
+
+pivot = Pivot.new(scan=scans, tof=tofs, intensity=intensities)
+pivot.permute(urt_tof_scan_order)
+pivot.reorder()
+
+pivot.array
+pivot.columns
+pivot.maxes
+# TODO: is sorting done the right direction?
+
+# now, the idea behind redoing
+# why not do this 
+
+# this is sort of vectorized too?
+@numba.njit
+def horner_around_corner(coefs, maxes, result=0):
+    for coef, max_coef in zip(coefs, maxes):
+        result *= max_coef
+        result += coef
+    return result
+
+
+coefs = (
+    np.random.permutation(100).astype(np.uint32), 
+    np.random.permutation(100).astype(np.uint32),
+    np.random.permutation(100).astype(np.uint32),
+)
+result = np.zeros(100, dtype=np.uint64)
+horner_around_corner(
+    coefs,
+    np.array([100,100,100], dtype=np.uint32),
+    result,
+)
+
+
+horner_around_corner(
+    (urts, scans, tofs),
+    np.array((urt_max, scan_max, tof_max), dtype=np.uint32),
+)
+
+
+results = np.zeros(shape=len(urts), dtype=np.uintp)
+horner((urts, scans, tofs), (urt_max, scan_max, tof_max), 0, len(intensities), results)
+
+r = horner_around_corner((10,12,14), (100,100,100))
+print(r)
+
+10 % 5
+10 // 5
+
+
+# will this not work also on numpy arrays as inputs?
+@numba.njit
+def renroh(num, maxes, results):
+    for i in range(len(maxes))
+    for rev_max in reversed_maxes:
+        num, res = divmod(num, rev_max)
+    divmod(num, maxes)
+
+
+
+# is the solution not: merge all extra dims into 1 array?
+# then we can always repivot the data.
+# we now know scans are small, urts too (for precursors)
+# only intensities and tofs are trouble makers.
+
+
+# %%time# 12"
+# Can it be faster? perhaps no need to do that for things we can count, like scans?
+%%time
 _visited = permute_inplace(
     urt_tof_scan_order, (scans, tofs, intensities)
-)  # urts too? No, they are the same as before.
+)  # urts too? No, they are the same as before. 
+
+# faster if we make copies. faster if multithreaded?
+# need to check it out.
+
+%%time
+intensities[urt_tof_scan_order]
+
+
 if paranoid:
     assert np.all(_visited)
     assert is_lex_nondecreasing(urts, tofs, scans)  # huzzzaah! sorted
+
+# Es gibt nicht viel zu retten. Andere ihm umschmeicheln.
+# Sie konnen ohne USA nicht viel erledigen.
+# Sie sind an USA angewiesen.
+# Wir haben uns diese
 
 
 # now, another approach: do local 3D peak counts and intensity sums.
@@ -231,6 +411,7 @@ def foo2(
     s,
     e,
     zz,
+    # we likely will need to learn how to extract a given dim?
     intensities,
     radius,
     # results
