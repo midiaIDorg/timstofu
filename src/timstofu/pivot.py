@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import numba
 import numpy as np
 
 from dataclasses import dataclass
@@ -12,8 +13,27 @@ from timstofu.math import div
 from timstofu.math import horner
 from timstofu.math import mod
 from timstofu.math import mod_then_div
+from timstofu.math import pack
+from timstofu.math import unpack_np
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import permute_into
+from timstofu.sort_and_pepper import grouped_argsort
+
+
+@numba.njit(parallel=True)
+def repivot(
+    array: NDArray,
+    maxes: NDArray,
+    permutation: NDArray,
+    output: NDArray,
+) -> None:
+    assert len(array) == len(output)
+    assert len(permutation) == len(maxes)
+    permuted_maxes = maxes[permutation]
+    for i in numba.prange(len(array)):
+        coefs = unpack_np(array[i], maxes)
+        output[i] = pack(coefs[permutation], permuted_maxes)
+    return output
 
 
 @dataclass
@@ -21,13 +41,13 @@ class Pivot:
     """This class could also be used for argsorts."""
 
     array: NDArray
-    maxes: DotDict
+    maxes: tuple[int]
     columns: tuple[str]
 
     @classmethod
     def new(
         cls,
-        _maxes: dict[str, int] | None = None,
+        _maxes: tuple[int, ...] | None = None,
         _array: NDArray | None = None,
         **data: NDArray,
     ):
@@ -63,10 +83,38 @@ class Pivot:
             yy=_array,
         )
 
-    def reorder(self, *new_columns) -> Pivot:
+    # we can also reconstruct from arrays: that will be faster still.
+    def repivot(self, new_columns_order, new_array: NDArray | None = None) -> Pivot:
+        assert set(new_columns_order) == set(self.columns)
+        if new_columns_order == self.columns:
+            return self
+        permutation = np.array([self.columns.index(c) for c in new_columns_order])
+        new_array = repivot(
+            array=self.array,
+            maxes=np.array(self.maxes),
+            permutation=permutation,
+            output=self.array.copy() if new_array is None else new_array,
+        )
+        return self.__class__(
+            array=new_array,
+            maxes=tuple(np.array(self.maxes)[permutation]),
+            columns=tuple(new_columns_order),
+        )
+
+    def sort(self, *new_columns) -> Pivot:
         assert set(new_columns) == set(self.columns)
         if new_columns == self.columns:
             return self
+
+    def argsort(self, order: NDArray | None = None, **index: NDArray):
+        assert len(index) == 1, "Provide `name_of_column=index` values."
+        column, index = next(iter(index.items()))
+        assert index[-1] == len(self)
+        if order is None:
+            order = np.empty(shape=len(self), dtype=get_min_int_data_type(len(self)))
+        assert len(order) == len(self)
+        grouped_argsort(self.array, index, order)
+        return order
 
     def __len__(self):
         return len(self.array)
@@ -112,3 +160,9 @@ def test_Pivot():
     for c in maxes:
         np.testing.assert_equal(pivot.extract(c), inputs[c])
     assert pivot.col2max == maxes
+    repivot = pivot.repivot(("B", "C", "A"))
+    np.testing.assert_equal(
+        repivot.array, (inputs["B"] * max_C + inputs["C"]) * max_A + inputs["A"]
+    )
+    for c in maxes:
+        np.testing.assert_equal(repivot.extract(c), inputs[c])

@@ -1,3 +1,7 @@
+"""
+Dumpus Maximus durch Experimenta mein Herr.
+"""
+
 import functools
 import math
 import numba
@@ -369,29 +373,26 @@ def test_rank():
     np.testing.assert_equal(expected, obtained)
 
 
-def _grouped_argsort(xx, group_index, order=None):
-    """Sort xx in groups
+@numba.njit(parallel=True)
+def grouped_argsort(xx, group_index, order):
+    """Sort arrays.
 
     Parameters
     ----------
-    xx (np.array): to be argsorted, grouped by index.
+    xx (np.array): Array to be argsorted, grouped by index.
     grouped_index (np.array): 1D array with counts, one field larger than the number of different values of the grouper.
+    order (np.array): Place to store results.
 
     Notes
     -----
     `group_index[i]:group_index[i+1]` returns a view into all members of the i-th group.
     """
-    if order is None:
-        order = np.empty(len(xx), dtype=np.uint32)
+    assert len(xx) == len(order)
+    assert len(xx) == group_index[-1]
     for i in numba.prange(len(group_index) - 1):
         s = group_index[i]
         e = group_index[i + 1]
         order[s:e] = s + np.argsort(xx[s:e])
-    return order
-
-
-grouped_argsorts = numba_wrap(_grouped_argsort)
-grouped_argsort = grouped_argsorts["safe", "multi_threaded"]
 
 
 @numba.njit

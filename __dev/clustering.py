@@ -39,6 +39,7 @@ from timstofu.numba_helper import permute_inplace
 from timstofu.numba_helper import test_foo_for_map_onto_lexsorted_indexed_data
 from timstofu.pivot import Pivot
 from timstofu.plotting import plot_discrete_marginals
+from timstofu.sort_and_pepper import grouped_argsort
 from timstofu.sort_and_pepper import grouped_lexargcountsort
 from timstofu.sort_and_pepper import is_lex_nondecreasing
 from timstofu.sort_and_pepper import rank
@@ -123,101 +124,42 @@ else:
         urt_counts,
     )
 
+intensity_max = intensities.max()
 
-pivot = Pivot.new(
+
+# uint64
+urt_scan_tof = Pivot.new(
     urt=urts,
     scan=scans,
     tof=tofs,    
 )
-pivot.maxes
-pivot.columns
-pivot.col2max
-pivot.array
-
-
-# I am missing local decoding for array: something working on array entry and given it and maxes makes the hole lot of love.
-
-x = pivot.array[0]
-maxes = pivot.maxes
-
-
-@numba.njit
-def unpack3(x, max1, max2):
-    c = x % max2
-    x //= max2
-    b = x % max1
-    x //= max1
-    return c,b,x
-
-@numba.njit
-def unpack(x, maxes):
-    for m in maxes[::-1]:
-        yield x % m
-        x //= m
-        
-%%timeit
-c,b,a = unpack(x, maxes)
-
-%%timeit
-c,b,a = unpack3(x, maxes[1], maxes[2])
-
-
-
-%%timeit
-_grouped_argsort(pivot.array, urt_index, order)
-
-
-@numba.njit(boundscheck=True, parallel=True)
-def _grouped_argsort(
-    xx: NDArray, group_index: NDArray, order: NDArray
-) -> NDArray:
-    """Sort arrays.
-
-    Parameters
-    ----------
-    xx (np.array): Array to be argsorted, grouped by index.
-    grouped_index (np.array): 1D array with counts, one field larger than the number of different values of the grouper.
-    order (np.array): Place to store results.
-
-    Notes
-    -----
-    `group_index[i]:group_index[i+1]` returns a view into all members of the i-th group.
-    """
-    for i in numba.prange(len(group_index) - 1):
-        s = group_index[i]
-        e = group_index[i + 1]
-        order[s:e] = s + np.argsort(xx[s:e])
-
-
-
-
-scan_max, tof_max, intensity_max = map(
-    lambda v: int(v.max() + 1), (scans, tofs, intensities)
-) # +1 to remain in scope
-
-
 if paranoid:
-    urt_scan_tof_order = grouped_lexargcountsort(
-        arrays=(scans, tofs),
-        group_index=urt_index,
-    )
+    urt_scan_tof_order = urt_scan_tof.argsort(urt=urt_index)
     assert is_lex_nondecreasing(urt_scan_tof_order)
     assert urt_scan_tof_order[0] == 0
     assert urt_scan_tof_order[-1] == urt_index[-1] - 1
 
+# urt_scan_tof.maxes
+# urt_scan_tof.columns
+# urt_scan_tof.col2max
+# urt_scan_tof.array
 
-# there are too many argsorts I already have now.
-# there should be only one with array and index.
+save_ram = False
+if save_ram:
+    urt_tof_scan = urt_scan_tof.repivot(("urt","tof","scan"))
+else:
+    urt_tof_scan = Pivot.new(
+        urt=urts,
+        tof=tofs,    
+        scan=scans,
+    )
 
+assert len(urt_tof_scan) == len(urt_scan_tof)
 
-
-
-
-urt_tof_scan_order = grouped_lexargcountsort(
-    arrays=(tofs, scans),
-    group_index=urt_index,
-    # order=?, RAM OPTIMIZATION POSSIBILITY?
-)
+# optional in .new?
+urt_index = get_index(urt_counts)
+urt_tof_scan_order = urt_tof_scan.argsort(urt=urt_index)
+urt_tof_scan.permute(urt_tof_scan_order)
 
 if paranoid:
     assert is_permutation(urt_tof_scan_order)

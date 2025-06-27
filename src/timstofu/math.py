@@ -68,7 +68,21 @@ def horner(arrays: tuple[NDArray], maxes: tuple[int], res: NDArray | None) -> ND
 
 
 @numba.njit
+def pack(values, maxes):
+    """A hidden Horner crawling around the corner."""
+    r = 0
+    for i in range(len(maxes)):
+        r *= maxes[i]
+        r += values[i]
+    return r
+
+
+@numba.njit
 def unpack3D(x, max1, max2):
+    """Given maxes, get components of x in reverse Horner scheme.
+
+    Specialized when x is know to consist of 3 entries. (3x faster to `unpack`).
+    """
     c = x % max2
     x //= max2
     b = x % max1
@@ -78,9 +92,22 @@ def unpack3D(x, max1, max2):
 
 @numba.njit
 def unpack(x, maxes):
+    """Given maxes, get components of x in reverse Horner scheme."""
     for m in maxes[::-1]:
         yield x % m
         x //= m
+
+
+@numba.njit
+def unpack_np(x, maxes):
+    """Given maxes, get components of x in reverse Horner scheme."""
+    N = len(maxes)
+    res = np.empty(shape=N, dtype=np.uint64)
+    for i in range(len(maxes) - 1, -1, -1):
+        m = maxes[i]
+        res[i] = x % m
+        x //= m
+    return res
 
 
 ## Funny: operator.mod worked, but own function did not work.
