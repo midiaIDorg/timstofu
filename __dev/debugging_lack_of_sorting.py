@@ -40,3 +40,5 @@ tof_scan_urt = Pivot.new(
 tof_scan_urt.is_sorted()
 tof_scan_urt.sort()
 tof_scan_urt.is_sorted()
+
+tof_scan_urt.argsort()

@@ -7,6 +7,7 @@ import numpy as np
 from dataclasses import dataclass
 from dataclasses import field
 from numpy.typing import NDArray
+from warnings import warn
 
 from dictodot import DotDict
 
@@ -26,7 +27,7 @@ from timstofu.stats import count1D
 from timstofu.stats import get_index
 
 
-# from timstofu.sort_and_pepper import grouped_argsort
+from timstofu.sort import grouped_argsort
 
 
 @numba.njit(parallel=True)
@@ -139,7 +140,19 @@ class Pivot:
     def is_sorted(self):
         return is_lex_nondecreasing(self.array)
 
-    def argsort(self, order: NDArray | None = None):
+    def argsort(
+        self,
+        order: NDArray | None = None,
+        return_trivial: bool = False,
+    ):
+        if self.is_sorted():
+            if return_trivial:
+                return np.arange(len(self), dtype=get_min_int_data_type(len(self)))
+
+            raise ValueError(
+                "The data is sorted and you don't need an argsort. We can give you one if you choose `return_trivial=True`."
+            )
+
         index = get_index(self.counts[self.columns[0]])
         if order is None:
             order = np.empty(
