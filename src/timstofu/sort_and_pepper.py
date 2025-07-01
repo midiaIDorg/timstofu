@@ -1,5 +1,7 @@
 """
 Dumpus Maximus durch Experimenta mein Herr.
+
+Need to make a new file from which we will only use foos.
 """
 
 import functools
@@ -272,7 +274,8 @@ def lexargcountsort2D_to_3D(
     return xy_to_xyz_order
 
 
-# TODO: make it possible to use user allocated arrays for results
+# TODO: OBSOLETE.
+# TODO: make it possible to use user allocated arrays for results:
 @inputs_series_to_numpy
 def argcountsort3D(
     xx: NDArray | pd.Series,
@@ -606,7 +609,7 @@ def _countlexargsort(arrays, array_maxes, group_index, order) -> NDArray:
 
 
 @numba.njit(boundscheck=True, parallel=True)
-def _countlexargsort_2D(
+def _grouped_argsort(
     xx: NDArray, yy: NDArray, y_max: int, group_index: NDArray, order: NDArray
 ) -> NDArray:
     """Sort arrays.
@@ -654,7 +657,7 @@ def grouped_lexargcountsort(
     if len(arrays) == 2:
         xx, yy = arrays
         y_max = array_maxes[1]
-        return _countlexargsort_2D(xx, yy, y_max, group_index, order)
+        return _grouped_argsort(xx, yy, y_max, group_index, order)
 
     assert len(dtypes) == 1, "Submitted arrays must have the same dtype."
 

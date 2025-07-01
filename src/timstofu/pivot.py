@@ -5,6 +5,7 @@ import numba
 import numpy as np
 
 from dataclasses import dataclass
+from dataclasses import field
 from numpy.typing import NDArray
 
 from dictodot import DotDict
@@ -18,7 +19,14 @@ from timstofu.math import unpack_np
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import minimal_uint_type_from_list
 from timstofu.numba_helper import permute_into
-from timstofu.sort_and_pepper import grouped_argsort
+from timstofu.sort import _grouped_sort
+from timstofu.sort import argcountsort
+from timstofu.sort import is_lex_nondecreasing
+from timstofu.stats import count1D
+from timstofu.stats import get_index
+
+
+# from timstofu.sort_and_pepper import grouped_argsort
 
 
 @numba.njit(parallel=True)
@@ -44,12 +52,19 @@ class Pivot:
     array: NDArray
     maxes: tuple[int]
     columns: tuple[str]
+    counts: DotDict = field(default_factory=DotDict)
+
+    def __post_init__(self):
+        assert set(self.columns) == set(
+            self.counts
+        ), "We work under assumptions that for each column there shall be a count. Use `.new` or adapt it."
 
     @classmethod
     def new(
         cls,
         _maxes: tuple[int, ...] | None = None,
         _array: NDArray | None = None,
+        counts: DotDict | dict[str, NDArray] = DotDict(),
         **data: NDArray,
     ):
         N = None
@@ -67,10 +82,16 @@ class Pivot:
             else _array
         )
         assert len(_array) == N
+        counts = DotDict(counts)
+        for c in counts:
+            assert c in data
+        for c, arr in data.items():
+            counts[c] = counts.get(c, count1D(arr))
         return cls(
             array=horner(tuple(data.values()), _maxes, _array),
             maxes=_maxes,
             columns=tuple(data),
+            counts=counts,
         )
 
     def __repr__(self):
@@ -99,22 +120,33 @@ class Pivot:
             array=new_array,
             maxes=tuple(np.array(self.maxes)[permutation]),
             columns=tuple(new_columns_order),
+            counts=self.counts,
         )
 
-    def sort(self, *new_columns) -> Pivot:
-        assert set(new_columns) == set(self.columns)
-        if new_columns == self.columns:
-            return self
+    # we could force getting all counts and indices at new? simplifies code...
+    def sort(self) -> None:
+        if self.is_sorted():
+            return None
+        first_col_name = self.columns[0]
+        first_col = self.extract(first_col_name)
+        counts = self.counts[first_col_name]
+        index = get_index(counts)
+        if not is_lex_nondecreasing(first_col):  # need to presort on that dim
+            first_col_order = argcountsort(first_col, counts)
+            self.permute(first_col_order)
+        _grouped_sort(self.array, index, self.array)
 
-    def argsort(self, order: NDArray | None = None, **index: NDArray):
-        assert len(index) == 1, "Provide `name_of_column=index` values."
-        column, index = next(iter(index.items()))
-        assert index[-1] == len(self)
+    def is_sorted(self):
+        return is_lex_nondecreasing(self.array)
+
+    def argsort(self, order: NDArray | None = None):
+        index = get_index(self.counts[self.columns[0]])
         if order is None:
             order = np.empty(
                 shape=len(self), dtype=get_min_int_data_type(len(self), signed=False)
             )
         assert len(order) == len(self)
+        assert index[-1] == len(self)
         grouped_argsort(self.array, index, order)
         return order
 
@@ -172,3 +204,6 @@ def test_Pivot():
     )
     for c in maxes:
         np.testing.assert_equal(repivot.extract(c), inputs[c])
+    assert not repivot.is_sorted()
+    repivot.sort()
+    assert repivot.is_sorted()
