@@ -4,9 +4,9 @@ import math
 
 import numba
 import numpy as np
-import numpy.typing as npt
 
 from numba_progress import ProgressBar
+from numpy.typing import NDArray
 
 from timstofu.numba_helper import inputs_series_to_numpy
 from timstofu.numba_helper import zeros_copy
@@ -35,7 +35,7 @@ def trivial_normal_cdf(x, mu=0.0, sigma=1.0):
     return 0.5 * (1 + math.erf((x - mu) / (sigma * math.sqrt(2))))
 
 
-def discrete_hist(arr) -> tuple[npt.NDArray]:
+def discrete_hist(arr) -> tuple[NDArray]:
     """Make a discrete histogram data.
 
     Returns:
@@ -45,14 +45,14 @@ def discrete_hist(arr) -> tuple[npt.NDArray]:
 
 
 @numba.njit
-def _count_sorted(xx: npt.NDArray) -> npt.NDArray:
+def _count_sorted(xx: NDArray) -> NDArray:
     """Count elements of a sorted array.
 
     Arguments:
         xx: Array of ints.
 
     Returns:
-        npt.NDArray: Array of counts.
+        NDArray: Array of counts.
     """
     counts = np.zeros(shape=xx[-1] + 1, dtype=np.uint32)
     for x in xx:
@@ -64,7 +64,7 @@ count_sorted = functools.wraps(_count_sorted)(inputs_series_to_numpy(_count_sort
 
 
 @numba.njit
-def _minmax(xx: npt.NDArray, *args):
+def _minmax(xx: NDArray, *args):
     _min = xx[0]
     _max = xx[0]
     for x in xx:
@@ -77,7 +77,7 @@ minmax = functools.wraps(_minmax)(inputs_series_to_numpy(_minmax))
 
 
 @numba.njit
-def _count1Dsparse(xx: npt.NDArray) -> npt.NDArray:
+def _count1Dsparse(xx: NDArray) -> NDArray:
     """Count elements in an array of ints.
 
     Arguments:
@@ -99,8 +99,8 @@ def _count1Dsparse(xx: npt.NDArray) -> npt.NDArray:
 count1Dsparse = functools.wraps(_count1Dsparse)(inputs_series_to_numpy(_count1Dsparse))
 
 
-@numba.njit
-def _count1D(xx: npt.NDArray, counts: npt.NDArray | None = None) -> npt.NDArray:
+@numba.njit(boundscheck=True)
+def _count1D(xx: NDArray, counts: NDArray) -> NDArray:
     """Count elements in an array of ints.
 
     Arguments:
@@ -109,22 +109,26 @@ def _count1D(xx: npt.NDArray, counts: npt.NDArray | None = None) -> npt.NDArray:
     Returns:
         np.array: Counts.
     """
-    if counts is None:
-        counts = np.zeros(shape=int(xx.max()) + 1, dtype=np.uint32)
+    one_but_not_the_same = np.uintp(1)
     for x in xx:
-        counts[x] += 1
+        counts[x] += one_but_not_the_same
     return counts
 
 
-count1D = functools.wraps(_count1D)(inputs_series_to_numpy(_count1D))
+@functools.wraps(_count1D)
+@inputs_series_to_numpy
+def count1D(xx: NDArray, counts: NDArray | None = None):
+    if counts is None:
+        counts = np.zeros(shape=int(xx.max()) + 1, dtype=np.uint32)
+    return _count1D(xx, counts)
 
 
 @numba.njit(boundscheck=True)
 def _count2D(
-    xx: npt.NDArray,
-    yy: npt.NDArray,
+    xx: NDArray,
+    yy: NDArray,
     dtype: type = np.uint64,
-) -> tuple[npt.NDArray, float | int, float | int, float | int, float | int]:
+) -> tuple[NDArray, float | int, float | int, float | int, float | int]:
     """
     Count 2D stats of occurrences of tuples (x,y).
     """
@@ -175,7 +179,7 @@ def cumsum(xx):
 
 # TODO: There should be one function. We should not use counts, but enlarge the index by 1 in every dim to make better use of RAM.
 @numba.njit
-def get_precumsums(counts: npt.NDArray) -> npt.NDArray:
+def get_precumsums(counts: NDArray) -> NDArray:
     """
     Compute the cumulative sum of entries in a 2D array up to (but not including) each element,
     using lexicographic (row-major) order.
@@ -199,12 +203,12 @@ def get_precumsums(counts: npt.NDArray) -> npt.NDArray:
 
 @functools.wraps(get_precumsums)
 @numba.njit
-def alt_get_precumsums(counts: npt.NDArray) -> npt.NDArray:
+def alt_get_precumsums(counts: NDArray) -> NDArray:
     return np.cumsum(counts).reshape(counts.shape) - counts
 
 
 @numba.njit(boundscheck=True)
-def _count_unique(sorted_xx: npt.NDArray) -> int:
+def _count_unique(sorted_xx: NDArray) -> int:
     """Count unique occurrences of a sorted array.
 
     Arguments:
@@ -226,12 +230,12 @@ count_unique = functools.wraps(_count_unique)(inputs_series_to_numpy(_count_uniq
 
 @numba.njit(boundscheck=True)
 def count_unique_for_indexed_data(
-    zz_lexsorted: npt.NDArray,
-    counts: npt.NDArray,
-    index: npt.NDArray,
-    unique_counts: npt.NDArray | None = None,
+    zz_lexsorted: NDArray,
+    counts: NDArray,
+    index: NDArray,
+    unique_counts: NDArray | None = None,
     progress_proxy: ProgressBar | None = None,
-) -> npt.NDArray:
+) -> NDArray:
     """Count the number of unique (x,y,z) tuples in a sorted order with counts and index."""
     if unique_counts is None:
         unique_counts = zeros_copy(counts)
@@ -245,14 +249,14 @@ def count_unique_for_indexed_data(
 
 
 @numba.njit(boundscheck=True)
-def get_index(counts: npt.NDArray) -> npt.NDArray:
+def get_index(counts: NDArray) -> NDArray:
     """Turn counts into cumulated sums offset by one 0 at the beginning.
 
     This function should be used to create an indexed view of elements in another table where elements are in groups and counts summarizes how many times they occur in those groups.
     See test_get_index.
 
     Arguments:
-        counts (npt.NDArray): An array of counts.
+        counts (NDArray): An array of counts.
 
     Returns:
         np.array: A table with 0 and then cumulated counts.
@@ -303,7 +307,7 @@ def test_get_index():
 def get_window_borders(
     i: int,
     i_max: int,
-    xx: npt.NDArray,
+    xx: NDArray,
     radius: int,
     left: int = 0,
     right: int = 0,
@@ -362,7 +366,7 @@ def max_intensity_in_window(results, xx, weights, radius, left=0, right=0):
 
 
 @numba.njit(boundscheck=True, parallel=True)
-def get_unique_cnts_in_groups(xx_index: npt.NDArray, yy: npt.NDArray):
+def get_unique_cnts_in_groups(xx_index: NDArray, yy: NDArray):
     unique_y_per_x = np.zeros(shape=len(xx_index) - 1, dtype=np.uint32)
     for i in numba.prange(len(xx_index) - 1):
         x_s = xx_index[i]

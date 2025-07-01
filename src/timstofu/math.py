@@ -1,8 +1,10 @@
+import math
 import numba
 import numpy as np
 import operator
 
 from numpy.typing import NDArray
+from timstofu.stats import _minmax
 
 
 @numba.njit(parallel=True)
@@ -164,6 +166,41 @@ def test_max_nonzero():
     i = len(xx) - 1
     assert xx[i + max_nonzero_up(i, xx, 3)] == xx[-1]
     assert xx[i - max_nonzero_down(i, xx, 3)] == 123
+
+
+@numba.njit(fastmath=True)
+def log2(xx):
+    return np.log2(xx)
+
+
+@numba.njit(parallel=True)
+def discretize(xx, res=None, transform=log2):
+    if res is None:
+        res = np.empty(shape=xx.shape, dtype=np.uint8)
+    assert len(res) == len(xx)
+    _min, _max = _minmax(xx)
+    _min = transform(_min)
+    _max = transform(_max)
+    mult = 255 / (_max - _min)
+    for i in numba.prange(len(res)):
+        res[i] = (transform(xx[i]) - _min) * mult
+    return res
+
+
+@numba.njit(parallel=True)
+def _reduce_resolution(xx: NDArray, factor: float, output: NDArray) -> None:
+    for i in numba.prange(len(xx)):
+        output[i] = math.ceil(xx[i] / factor)
+
+
+def reduce_resolution(
+    xx: NDArray, factor: float, output: NDArray | None = None
+) -> NDArray:
+    if output is None:
+        output = np.empty(dtype=xx.dtype, shape=xx.shape)
+    assert len(output) == len(xx)
+    _reduce_resolution(xx, factor, output)
+    return output
 
 
 ## Funny: operator.mod worked, but own function did not work.

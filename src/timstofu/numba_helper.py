@@ -77,6 +77,57 @@ def get_min_int_data_type(x, signed: bool = True):
     return np.dtype(f"{'int' if signed else 'uint'}{bits}")
 
 
+import numpy as np
+
+
+def minimal_uint_type_from_list(xs):
+    """
+    Determine the minimal NumPy unsigned integer type needed to store a bit sum
+    derived from a list of non-negative integers.
+
+    For each element `x` in `xs`, computes log2(x + 1) to estimate the number of
+    bits needed to uniquely represent the value. Sums these bit estimates across
+    the list, then returns the smallest NumPy unsigned integer type (e.g., uint8,
+    uint16, etc.) that can store the total bit count.
+
+    Generated automatically by ChatGPT.
+
+    Parameters
+    ----------
+    xs : array-like of int
+        A list or array of non-negative integers.
+
+    Returns
+    -------
+    dtype : numpy.dtype
+        The smallest NumPy unsigned integer type capable of storing the total bit count.
+
+    Raises
+    ------
+    ValueError
+        If any value in `xs` is negative or the total bit requirement exceeds 64 bits.
+    """
+    xs = np.asarray(xs)
+    if np.any(xs < 0):
+        raise ValueError("All values must be non-negative")
+
+    uints = [np.uint8, np.uint16, np.uint32, np.uint64]
+    limits = [np.iinfo(dt).bits for dt in uints]
+
+    if xs.size == 0:
+        total_bits = 1
+    else:
+        xs_copy = xs.copy()
+        xs_copy[np.argmin(xs_copy)] += 1
+        total_bits = int(np.ceil(np.sum(np.log2(xs_copy))))
+
+    for dtype, limit in zip(uints, limits):
+        if total_bits <= limit:
+            return dtype
+
+    raise ValueError("Sum requires more than 64 bits")
+
+
 def inputs_series_to_numpy(foo):
     @functools.wraps(foo)
     def wrapper(*args, **kwargs):

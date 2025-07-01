@@ -16,6 +16,7 @@ from timstofu.math import mod_then_div
 from timstofu.math import pack
 from timstofu.math import unpack_np
 from timstofu.numba_helper import get_min_int_data_type
+from timstofu.numba_helper import minimal_uint_type_from_list
 from timstofu.numba_helper import permute_into
 from timstofu.sort_and_pepper import grouped_argsort
 
@@ -60,9 +61,8 @@ class Pivot:
             if _maxes is None
             else _maxes
         )
-        max_size = math.prod(_maxes)
         _array = (
-            np.empty(shape=N, dtype=get_min_int_data_type(max_size))
+            np.empty(shape=N, dtype=minimal_uint_type_from_list(_maxes))
             if _array is None
             else _array
         )
@@ -111,7 +111,9 @@ class Pivot:
         column, index = next(iter(index.items()))
         assert index[-1] == len(self)
         if order is None:
-            order = np.empty(shape=len(self), dtype=get_min_int_data_type(len(self)))
+            order = np.empty(
+                shape=len(self), dtype=get_min_int_data_type(len(self), signed=False)
+            )
         assert len(order) == len(self)
         grouped_argsort(self.array, index, order)
         return order
@@ -131,7 +133,8 @@ class Pivot:
             raise ValueError(f"Column `{column}` not among [{', '.join(self.columns)}]")
         if out is None:
             out = np.empty(
-                shape=len(self.array), dtype=get_min_int_data_type(self.maxes[k])
+                shape=len(self.array),
+                dtype=get_min_int_data_type(self.maxes[k], signed=False),
             )
         assert len(out) == len(self)
         if k == 0:

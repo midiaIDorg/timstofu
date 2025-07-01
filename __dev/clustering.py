@@ -29,6 +29,8 @@ from dictodot import DotDict
 from mmapuccino import MmapedArrayValuedDict
 from mmapuccino import empty
 
+from timstofu.math import discretize
+from timstofu.math import log2
 from timstofu.math import max_nonzero_down
 from timstofu.math import max_nonzero_up
 from timstofu.math import sum_weights
@@ -50,11 +52,13 @@ from timstofu.stats import count1D
 from timstofu.stats import count2D
 from timstofu.stats import count2D_marginals
 from timstofu.stats import cumsum
+from timstofu.stats import discrete_hist
 from timstofu.stats import get_index
 from timstofu.stats import get_unique_cnts_in_groups
 from timstofu.stats import get_window_borders
 from timstofu.stats import max_around
 from timstofu.stats import max_intensity_in_window
+from timstofu.stats import minmax
 from timstofu.tofu import LexSortedClusters
 from timstofu.tofu import LexSortedDataset
 
@@ -127,7 +131,18 @@ else:
         urt_counts,
     )
 
-intensity_max = intensities.max()
+
+res = discretize(intensities, transform=log2)
+dintensity_counts = np.zeros(dtype=np.int32, shape=256)
+count1D(res, counts=dintensity_counts)
+
+plt.scatter(np.arange(len(dintensity_counts)), dintensity_counts, s=1)
+plt.yscale("log")
+plt.show()
+
+
+# For TOFs, perhaps simply get the next nonempty tof value??
+# we need to check how far away points are from each other... how?
 
 
 # uint64
@@ -136,16 +151,16 @@ urt_scan_tof = Pivot.new(
     scan=scans,
     tof=tofs,
 )
+
+
+# calculate next nonzero event distance for everything as function of
+# tof finally. Perhaps this will show if going log(tof) makes sense or not.
+urt_index = get_index(urt_counts)
 if paranoid:
     urt_scan_tof_order = urt_scan_tof.argsort(urt=urt_index)
-    assert is_lex_nondecreasing(urt_scan_tof_order)
+    assert is_arange(urt_scan_tof_order)
     assert urt_scan_tof_order[0] == 0
     assert urt_scan_tof_order[-1] == urt_index[-1] - 1
-
-# urt_scan_tof.maxes
-# urt_scan_tof.columns
-# urt_scan_tof.col2max
-# urt_scan_tof.array
 
 save_ram = False
 if save_ram:
@@ -159,13 +174,13 @@ else:
 
 assert len(urt_tof_scan) == len(urt_scan_tof)
 
-# optional in .new?
-urt_index = get_index(urt_counts)
 urt_tof_scan_order = urt_tof_scan.argsort(urt=urt_index)
 urt_tof_scan.permute(urt_tof_scan_order)
 
 if paranoid:
     assert is_permutation(urt_tof_scan_order)
+    # but is it sorted?
+    is_lex_nondecreasing(urt_tof_scan.extract("tof"))
 
 
 # now, another approach: do local 3D peak counts and intensity sums.
