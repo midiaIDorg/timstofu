@@ -476,3 +476,18 @@ def is_arange(res, _min=0, _max=None):
         if i != r:
             return False, i, r
     return True, i, r
+
+
+@numba.njit
+def divide_indices(N: int, k: int = numba.get_num_threads()):
+    # Compute chunk sizes (some chunks may be 1 element longer to handle remainders)
+    chunk_sizes = [(N + i) // k for i in range(k)]
+
+    # Convert sizes to start and end indices
+    indices = []
+    start = 0
+    for size in chunk_sizes:
+        end = start + size
+        indices.append((start, end))
+        start = end
+    return indices

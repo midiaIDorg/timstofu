@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import math
 import numba
 import numpy as np
@@ -165,6 +166,10 @@ class Pivot:
 
     def __len__(self):
         return len(self.array)
+
+    def index(self, column):
+        assert column in self.columns
+        return get_index(self.counts[column])
 
     @property
     def col2max(self):
