@@ -56,28 +56,62 @@ tof_scan_urt = Pivot.new(
 tof_scan_urt.sort()
 assert tof_scan_urt.is_sorted()
 
-radii = np.array((1, 1, 1))
-shape = 2 * radii + 1
+# shape = np.append(2 * radii + 1, 2)
+# indices = np.zeros(shape, dtype=get_min_int_data_type(len(tof_scan_urt)))
 
-indices = np.zeros(shape, dtype=get_min_int_data_type(len(tof_scan_urt)))
+
 
 weights = intensities[:100]
 data = tof_scan_urt.array[:1000]
+tof_scan_urt.maxes
+
+maxes = tof_scan_urt.maxes
+
+tof_scan_urt.get_stencil_diffs(tof=1,scan=4,urt=2)
+
+
 
 def foo(indices, current_idx,)
     
 
 
 
+
+
+get_diffs(radii, maxes)
+# turn this into numbers using maxes. missing window in tof. adding it.
+
+
+
+@numba.njit
 # Iterate over starts end positions.
 chunk_ends = divide_indices(len(tof_scan_urt))
 
 @numba.njit(parallel=True)
-def nbmap(chunk_ends, indices, progress_proxy):
+def nbmap(
+    chunk_ends,
+    indices,
+    data,
+    # results_updater,
+    # results_updater_args,
+    progress_proxy,
+):
+    assert indices.shape[-1] == 2
+    data_shape = indices.shape[:-1]
     for i in numba.prange(len(chunk_ends)):
         s, e = chunk_ends[i]
-        local_indices = indices.copy()
-        local_indices[:] = s
+        _indices = indices.copy()
+        _indices[:] = s
+        for center_idx in range(s,e):
+            # update _indices:
+
+
+            # update results
+            for stencil_idx in np.ndindex(data_shape):
+                stencil_idx
+
+                # results_updater(center_idx, stencil_idx, _indices, *results_updater_args)
+
         progress_proxy.update(e-s)
 
 with ProgressBar(
@@ -87,6 +121,9 @@ with ProgressBar(
     nbmap(
         chunk_ends,
         indices,
+        data,
+        # results_updater,
+        # tuple(*results_updater_results),
         progress_proxy,
     )
 

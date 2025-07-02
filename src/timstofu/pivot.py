@@ -12,6 +12,7 @@ from warnings import warn
 
 from dictodot import DotDict
 
+from timstofu.itertools import iter_stencil_indices
 from timstofu.math import div
 from timstofu.math import horner
 from timstofu.math import mod
@@ -200,6 +201,18 @@ class Pivot:
 
     def __getitem__(self, column) -> NDArray:
         return self.extract(column)
+
+    def get_stencil_diffs(self, **radii):
+        for (c, radius), col in zip(radii.items(), self.columns):
+            assert (
+                c == col
+            ), f"radii must map the column name to radius in the same order as considered in this pivot: `({self.columns})`"
+        return np.array(
+            [
+                pack(stencil_idx, self.maxes)
+                for stencil_idx in iter_stencil_indices(*radii.values())
+            ]
+        )
 
 
 def test_Pivot():

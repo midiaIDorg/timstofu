@@ -77,9 +77,6 @@ def get_min_int_data_type(x, signed: bool = True):
     return np.dtype(f"{'int' if signed else 'uint'}{bits}")
 
 
-import numpy as np
-
-
 def minimal_uint_type_from_list(xs):
     """
     Determine the minimal NumPy unsigned integer type needed to store a bit sum
