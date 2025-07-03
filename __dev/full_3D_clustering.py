@@ -36,8 +36,6 @@ urts = decount(
     np.arange(urt_max, dtype=scans.dtype),
     urt_counts,
 )
-
-
 # urt_tof_scan = Pivot.new(
 #     urt=urts,
 #     tof=tofs,
@@ -57,62 +55,64 @@ tof_scan_urt.sort()
 assert tof_scan_urt.is_sorted()
 
 # shape = np.append(2 * radii + 1, 2)
-# indices = np.zeros(shape, dtype=get_min_int_data_type(len(tof_scan_urt)))
+# N = 1_000
+weights = intensities
+data = tof_scan_urt.array
 
-
-
-weights = intensities[:100]
-data = tof_scan_urt.array[:1000]
-tof_scan_urt.maxes
-
-maxes = tof_scan_urt.maxes
-
-tof_scan_urt.get_stencil_diffs(tof=1,scan=4,urt=2)
-
-
-
-def foo(indices, current_idx,)
-    
-
-
-
-
-
-get_diffs(radii, maxes)
-# turn this into numbers using maxes. missing window in tof. adding it.
-
-
-
-@numba.njit
-# Iterate over starts end positions.
+radii = dict(tof=1, scan=2, urt=2)
 chunk_ends = divide_indices(len(tof_scan_urt))
+
+
+diffs_dct = tof_scan_urt.get_stencil_diffs(tof=2, scan=2, urt=2)
+diffs = np.array(list(diffs_dct.values()))
+# diffs = diffs[diffs >= 0]
+
 
 @numba.njit(parallel=True)
 def nbmap(
     chunk_ends,
-    indices,
+    diffs,
     data,
     # results_updater,
     # results_updater_args,
     progress_proxy,
 ):
-    assert indices.shape[-1] == 2
-    data_shape = indices.shape[:-1]
+    ONE = np.uintp(1)
+    diffs = diffs.astype(np.intp)
+    assert chunk_ends[-1, -1] == len(data)
+    diff_starts = diffs[:, 0].copy()
+    diff_ends = diffs[:, 1].copy()
+
     for i in numba.prange(len(chunk_ends)):
-        s, e = chunk_ends[i]
-        _indices = indices.copy()
-        _indices[:] = s
-        for center_idx in range(s,e):
-            # update _indices:
+        chunk_s, chunk_e = chunk_ends[i]
+        window_starts = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
+        window_ends = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
 
+        for c_idx in range(chunk_s, chunk_e):  # INDEX OF THE CURRENT WINDOW'S CENTER
+            center_val = np.intp(data[c_idx])  # CENTER VALUE
+            # UPDATE INDEX: REMEMBER DATA IS STRICTLY INCREASING
+            for j in range(len(diffs)):
+                t_s = center_val + diff_starts[j]  # TARGET START
+                t_e = center_val + diff_ends[j]  # TARGET END
 
-            # update results
-            for stencil_idx in np.ndindex(data_shape):
-                stencil_idx
+                # MOVE START
+                while (
+                    window_starts[j] < c_idx and np.intp(data[window_starts[j]]) < t_s
+                ):
+                    window_starts[j] += ONE
 
-                # results_updater(center_idx, stencil_idx, _indices, *results_updater_args)
+                # MOVE END
+                window_ends[j] = max(window_starts[j], window_ends[j])
+                while window_ends[j] < chunk_e and np.intp(data[window_ends[j]]) <= t_e:
+                    window_ends[j] += ONE
 
-        progress_proxy.update(e-s)
+            # UPDATE RESULTS
+            # for stencil_s, stencil_e in diffs:
+            #     pass
+            #     # results_updater(c_idx, stencil_idx, _I, *results_updater_args)
+
+        progress_proxy.update(chunk_e - chunk_s)
+
 
 with ProgressBar(
     total=len(tof_scan_urt),
@@ -120,14 +120,9 @@ with ProgressBar(
 ) as progress_proxy:
     nbmap(
         chunk_ends,
-        indices,
+        diffs,
         data,
         # results_updater,
         # tuple(*results_updater_results),
         progress_proxy,
     )
-
-
-
-
-

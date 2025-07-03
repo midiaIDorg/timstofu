@@ -203,16 +203,20 @@ class Pivot:
         return self.extract(column)
 
     def get_stencil_diffs(self, **radii):
+        assert len(
+            radii
+        ), "Pass in radii mapping, e.g. tof=2, scan=2, frame=2, in order of the index."
         for (c, radius), col in zip(radii.items(), self.columns):
             assert (
                 c == col
             ), f"radii must map the column name to radius in the same order as considered in this pivot: `({self.columns})`"
-        return np.array(
-            [
-                pack(stencil_idx, self.maxes)
-                for stencil_idx in iter_stencil_indices(*radii.values())
-            ]
-        )
+        return {
+            ii: (
+                pack((*ii, -last_radius), self.maxes),
+                pack((*ii, last_radius), self.maxes),
+            )
+            for ii, last_radius in iter_stencil_indices(*radii.values())
+        }
 
 
 def test_Pivot():
