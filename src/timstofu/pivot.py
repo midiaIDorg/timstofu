@@ -206,14 +206,14 @@ class Pivot:
         assert len(
             radii
         ), "Pass in radii mapping, e.g. tof=2, scan=2, frame=2, in order of the index."
-        for (c, radius), col in zip(radii.items(), self.columns):
+        for (c, radius), col in zip(radii.items(), self.columns[: len(radii)]):
             assert (
                 c == col
             ), f"radii must map the column name to radius in the same order as considered in this pivot: `({self.columns})`"
         return {
             ii: (
-                pack((*ii, -last_radius), self.maxes),
-                pack((*ii, last_radius), self.maxes),
+                pack((*ii, -last_radius), self.maxes[: len(radii)]),
+                pack((*ii, last_radius), self.maxes[: len(radii)]),
             )
             for ii, last_radius in iter_stencil_indices(*radii.values())
         }

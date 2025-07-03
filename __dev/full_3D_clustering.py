@@ -6,9 +6,13 @@ import matplotlib.pyplot as plt
 import numba
 import numpy as np
 
+from dictodot import DotDict
 from numba_progress import ProgressBar
 from opentimspy import OpenTIMS
 
+from timstofu.math import discretize
+from timstofu.math import log2
+from timstofu.math import moving_window
 from timstofu.numba_helper import decount
 from timstofu.numba_helper import divide_indices
 from timstofu.numba_helper import get_min_int_data_type
@@ -36,93 +40,61 @@ urts = decount(
     np.arange(urt_max, dtype=scans.dtype),
     urt_counts,
 )
-# urt_tof_scan = Pivot.new(
-#     urt=urts,
-#     tof=tofs,
-#     scan=scans,
-# )
-# urt_tof_scan.is_sorted()
-# urt_tof_scan.sort()
-# assert urt_tof_scan.is_sorted()
 
+dintensity_counts = np.zeros(dtype=np.int32, shape=256)
+dintensity_counts = discretize(intensities, transform=log2)
 
-tof_scan_urt = Pivot.new(
+pivot = Pivot.new(
     tof=tofs,
     scan=scans,
     urt=urts,
+    dintensity=dintensity_counts,  # perhaps this should go out???
 )
-tof_scan_urt.sort()
-assert tof_scan_urt.is_sorted()
+pivot.sort()
+assert pivot.is_sorted()
+radii = dict(
+    tof=1,
+    scan=5,
+    urt=4,
+)
 
 # shape = np.append(2 * radii + 1, 2)
 # N = 1_000
-weights = intensities
-data = tof_scan_urt.array
-
-radii = dict(tof=1, scan=2, urt=2)
-chunk_ends = divide_indices(len(tof_scan_urt))
+intensities = pivot.extract("dintensity")
+chunk_ends = divide_indices(len(pivot), k=16 * 100)
 
 
-diffs_dct = tof_scan_urt.get_stencil_diffs(tof=2, scan=2, urt=2)
+diffs_dct = pivot.get_stencil_diffs(**radii)
 diffs = np.array(list(diffs_dct.values()))
 # diffs = diffs[diffs >= 0]
 
 
-@numba.njit(parallel=True)
-def nbmap(
-    chunk_ends,
-    diffs,
-    data,
-    # results_updater,
-    # results_updater_args,
-    progress_proxy,
-):
-    ONE = np.uintp(1)
-    diffs = diffs.astype(np.intp)
-    assert chunk_ends[-1, -1] == len(data)
-    diff_starts = diffs[:, 0].copy()
-    diff_ends = diffs[:, 1].copy()
+@numba.njit(boundscheck=True)
+def local_max(current_idx, start_idx, end_idx, intensities, results):
+    results[current_idx] = max(
+        results[current_idx], intensities[start_idx:end_idx].max()
+    )
 
-    for i in numba.prange(len(chunk_ends)):
-        chunk_s, chunk_e = chunk_ends[i]
-        window_starts = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
-        window_ends = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
 
-        for c_idx in range(chunk_s, chunk_e):  # INDEX OF THE CURRENT WINDOW'S CENTER
-            center_val = np.intp(data[c_idx])  # CENTER VALUE
-            # UPDATE INDEX: REMEMBER DATA IS STRICTLY INCREASING
-            for j in range(len(diffs)):
-                t_s = center_val + diff_starts[j]  # TARGET START
-                t_e = center_val + diff_ends[j]  # TARGET END
-
-                # MOVE START
-                while (
-                    window_starts[j] < c_idx and np.intp(data[window_starts[j]]) < t_s
-                ):
-                    window_starts[j] += ONE
-
-                # MOVE END
-                window_ends[j] = max(window_starts[j], window_ends[j])
-                while window_ends[j] < chunk_e and np.intp(data[window_ends[j]]) <= t_e:
-                    window_ends[j] += ONE
-
-            # UPDATE RESULTS
-            # for stencil_s, stencil_e in diffs:
-            #     pass
-            #     # results_updater(c_idx, stencil_idx, _I, *results_updater_args)
-
-        progress_proxy.update(chunk_e - chunk_s)
-
+updater = local_max
+updater_results = DotDict(max_intensity=np.zeros(len(pivot), intensities.dtype))
 
 with ProgressBar(
-    total=len(tof_scan_urt),
-    desc="Counting scans per tof",
+    total=len(pivot),
+    desc=f"Getting stats in window {radii}",
 ) as progress_proxy:
-    nbmap(
+    moving_window(
         chunk_ends,
         diffs,
-        data,
-        # results_updater,
-        # tuple(*results_updater_results),
+        pivot.array,
+        updater,
+        (intensities, *tuple(updater_results.values())),
         progress_proxy,
     )
+
+
+updater_results.max_intensity
+count1D(updater_results.max_intensity)
+
+
+np.unique(updater_results.max_intensity == intensities, return_counts=True)
