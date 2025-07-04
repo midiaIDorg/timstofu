@@ -190,9 +190,9 @@ with ProgressBar(
 
 
 updater_results.counts.max()
-w = count1D(updater_results.counts)
+counts = count1D(updater_results.counts)
 
-plt.scatter(np.arange(len(w)), w)
+plt.scatter(np.arange(len(counts)), counts)
 plt.yscale("log")
 plt.xlabel(
     f"# Events in box with radii {radii}. Max events = {math.prod(r*2+1 for r in radii.values())}"
@@ -203,6 +203,7 @@ plt.show()
 
 from matplotlib.colors import LogNorm
 
+
 updater_results_df = pd.DataFrame(updater_results, copy=False)
 marginals = count2D_marginals(updater_results_df)
 plot_discrete_marginals(
@@ -210,8 +211,13 @@ plot_discrete_marginals(
     imshow_kwargs=dict(norm=LogNorm()),
 )
 
-
-np.unique(updater_results.maxes == trabant.dintensity, return_counts=True)
+for i in counts.nonzero()[0]:
+    mask = updater_results.counts >= i
+    what, cnts = np.unique(
+        updater_results.maxes[mask] == trabant.dintensity[mask], return_counts=True
+    )
+    t, f = cnts
+    print(f"# Events with neighbour count >= {i}: local max {f} vs not {t}.")
 
 
 updater_results.counts
@@ -291,3 +297,14 @@ def test_moving_window():
 
     for c in expected:
         assert np.all(expected[c] == results[c]), f"`{c}` not the same."
+
+
+## AFTER VACATION.
+# def test_moving_window_by_comparing_with_random_real_data_queries():
+#     opentims = raw_data
+
+#     total_frames = opentims.get_frame_count()
+#     if frame_range is None:
+#         frame_range = (0, total_frames)
+
+#     frame_ids = list(range(*frame_range))
