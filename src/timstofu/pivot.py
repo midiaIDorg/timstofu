@@ -48,6 +48,9 @@ def repivot(
     return output
 
 
+# TODO: we should revise the code so that maxes are really maxes not maxes + 1, which would be shape.
+
+
 @dataclass
 class Pivot:
     """This class could also be used for argsorts."""
@@ -185,7 +188,7 @@ class Pivot:
         if out is None:
             out = np.empty(
                 shape=len(self.array),
-                dtype=get_min_int_data_type(self.maxes[k], signed=False),
+                dtype=get_min_int_data_type(self.maxes[k] - 1, signed=False),
             )
         assert len(out) == len(self)
         if k == 0:
@@ -199,8 +202,10 @@ class Pivot:
             out,
         )
 
-    def __getitem__(self, column) -> NDArray:
-        return self.extract(column)
+    def __getitem__(self, columns: str | list[str]) -> NDArray:
+        if isinstance(columns, str):
+            columns = [columns]
+        return DotDict({c: self.extract(c) for c in columns})
 
     def get_stencil_diffs(self, **radii):
         assert len(

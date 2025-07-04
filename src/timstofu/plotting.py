@@ -10,6 +10,7 @@ def plot_discrete_marginals(
     n: int | None = None,
     m: int | None = None,
     imshow_kwargs: dict = {},
+    aspect: str = "auto",
 ):
     """
     Plot a collection of 2D discrete marginal distributions in a grid of subplots.
@@ -62,6 +63,8 @@ def plot_discrete_marginals(
             ax.imshow(marginals[(colA, colB)][0], **imshow_kwargs)
             ax.set_ylabel(colA)
             ax.set_xlabel(colB)
+            if aspect:
+                ax.set_aspect(aspect=aspect)
         else:
             ax.axis("off")
     if show:
