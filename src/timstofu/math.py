@@ -203,56 +203,41 @@ def reduce_resolution(
     return output
 
 
-@numba.njit(parallel=True, boundscheck=True)
-def moving_window(
-    chunk_ends,
-    diffs,
-    data,
-    updater,
-    updater_args,
-    progress_proxy,
-):
-    ONE = np.uintp(1)
-    diffs = diffs.astype(np.intp)
-    assert chunk_ends[-1, -1] == len(data)
-    diff_starts = diffs[:, 0]
-    diff_ends = diffs[:, 1]
+def merge_intervals(lefts: NDArray, rights: NDArray) -> tuple[NDArray, NDArray]:
+    """Merge integer based intervals and drops empty ones."""
+    # Step 0: Remove empty intervals
+    mask = lefts < rights
+    lefts = lefts[mask]
+    rights = rights[mask]
 
-    for i in numba.prange(len(chunk_ends)):
-        # for i in range(len(chunk_ends)):
-        chunk_s, chunk_e = chunk_ends[i]
-        window_starts = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
-        window_ends = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
+    if len(lefts) == 0:
+        return np.array([], dtype=int), np.array([], dtype=int)
 
-        for c_idx in range(chunk_s, chunk_e):  # INDEX OF THE CURRENT WINDOW'S CENTER
-            center_val = np.intp(data[c_idx])  # CENTER VALUE
-            # UPDATE INDEX: REMEMBER DATA IS STRICTLY INCREASING
-            for j in range(len(diffs)):
-                t_s = center_val + diff_starts[j]  # TARGET START
-                t_e = center_val + diff_ends[j]  # TARGET END
+    # Step 1: Sort intervals by start
+    order = np.argsort(lefts)
+    lefts = lefts[order]
+    rights = rights[order]
 
-                # MOVE START
-                while (
-                    window_starts[j] < c_idx and np.intp(data[window_starts[j]]) < t_s
-                ):
-                    window_starts[j] += ONE
+    # Step 2: Merge intervals
+    merged_lefts = [lefts[0]]
+    merged_rights = [rights[0]]
 
-                # MOVE END
-                window_ends[j] = max(window_starts[j], window_ends[j])
-                while window_ends[j] < chunk_e and np.intp(data[window_ends[j]]) <= t_e:
-                    window_ends[j] += ONE
+    for l, r in zip(lefts[1:], rights[1:]):
+        if l <= merged_rights[-1]:  # Overlap or touching
+            merged_rights[-1] = max(merged_rights[-1], r)
+        else:
+            merged_lefts.append(l)
+            merged_rights.append(r)
 
-            # UPDATE RESULTS
-            for window_start, window_end in zip(window_starts, window_ends):
-                if window_start < window_end:  # RUN UPDATER ONLY ON NON-EMPTY WINDOWS
-                    updater(
-                        c_idx,  # BASICALLY, WHERE TO WRITE RESULTS
-                        window_start,
-                        window_end,  # WINDOW TO ITERATE OVER
-                        *updater_args,  # OTHER ARGUMENTS AND RESULT ARRAYS
-                    )
+    return np.array(merged_lefts), np.array(merged_rights)
 
-        progress_proxy.update(chunk_e - chunk_s)
+
+def test_merge_intervals():
+    lefts = np.array([100, 1, 5, 8, 12, 13, 14])
+    rights = np.array([200, 4, 6, 10, 12, 15, 16])
+    merged_lefts, merged_rights = merge_intervals(lefts, rights)
+    np.testing.assert_equal(merged_lefts, [1, 5, 8, 13, 100])
+    np.testing.assert_equal(merged_rights, [4, 6, 10, 16, 200])
 
 
 ## Funny: operator.mod worked, but own function did not work.

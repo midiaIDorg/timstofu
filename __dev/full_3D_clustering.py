@@ -15,7 +15,9 @@ from opentimspy import OpenTIMS
 
 from timstofu.math import discretize
 from timstofu.math import log2
-from timstofu.math import moving_window
+from timstofu.math import merge_intervals
+
+# from timstofu.math import moving_window
 from timstofu.numba_helper import decount
 from timstofu.numba_helper import divide_indices
 from timstofu.numba_helper import get_min_int_data_type
@@ -27,6 +29,7 @@ from timstofu.plotting import plot_discrete_marginals
 from timstofu.sort import argcountsort
 from timstofu.sort import grouped_argsort
 from timstofu.sort_and_pepper import is_lex_nondecreasing
+from timstofu.sort_and_pepper import is_nondecreasing
 from timstofu.stats import count1D
 from timstofu.stats import count2D_marginals
 from timstofu.stats import get_index
@@ -58,10 +61,11 @@ pivot = Pivot.new(
 pivot.sort()
 assert pivot.is_sorted()
 radii = dict(
-    tof=3,
+    tof=1,
     scan=20,
     urt=10,
 )
+
 
 # shape = np.append(2 * radii + 1, 2)
 # N = 1_000
@@ -75,7 +79,7 @@ diffs = np.array(list(diffs_dct.values()))
 # diffs = diffs[diffs >= 0]
 
 
-# TODO: make it into a method of the Pivot.
+# TODO: make it into a method of the Pivot?
 @numba.njit(parallel=True, boundscheck=True)
 def moving_window(
     chunk_ends,
@@ -83,7 +87,8 @@ def moving_window(
     data,
     updater,
     updater_args=(),
-    densify=False,
+    densify: bool = False,
+    check_chunks_cover_all_array: bool = True,
     progress_proxy=None,
 ):
     ONE = np.uintp(1)
@@ -92,20 +97,21 @@ def moving_window(
     msg = "Chunk ends must be a 2D array of start to end values to iterate over."
     assert len(chunk_ends) > 0, msg
     assert len(chunk_ends.shape) == 2, msg
-    if len(chunk_ends) > 1:
-        prev_chunk = chunk_ends[0]
-        for i in range(1, len(chunk_ends)):
-            chunk = chunk_ends[i]
-            assert prev_chunk[1] == chunk[0]
-            prev_chunk = chunk
-    assert chunk_ends[-1, -1] == len(data), "Chunks must divide all of the data."
+    if check_chunks_cover_all_array:
+        if len(chunk_ends) > 1:
+            prev_chunk = chunk_ends[0]
+            for i in range(1, len(chunk_ends)):
+                chunk = chunk_ends[i]
+                assert prev_chunk[1] == chunk[0]
+                prev_chunk = chunk
+        assert chunk_ends[-1, -1] == len(data), "Chunks must divide all of the data."
 
     diff_starts = diffs[:, 0]
     diff_ends = diffs[:, 1]
 
-    for i in numba.prange(len(chunk_ends)):
-        # for i in range(len(chunk_ends)):
-        chunk_s, chunk_e = chunk_ends[i]
+    # for chunk_idx in range(len(chunk_ends)):
+    for chunk_idx in numba.prange(len(chunk_ends)):
+        chunk_s, chunk_e = chunk_ends[chunk_idx]
         window_starts = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
         window_ends = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
 
@@ -138,7 +144,8 @@ def moving_window(
             for window_start, window_end in zip(window_starts, window_ends):
                 if window_start < window_end:  # RUN UPDATER ONLY ON NON-EMPTY WINDOWS
                     updater(
-                        c_idx,  # BASICALLY, WHERE TO WRITE RESULTS
+                        chunk_idx,  # SOMETIMES USEFULL BECAUSE OF LACK OF ATOMICITY
+                        c_idx,  # LEADING INDEX: UNDER THAT ADDRESS WRITE RESULTS
                         window_start,
                         window_end,  # WINDOW TO ITERATE OVER
                         *updater_args,  # OTHER ARGUMENTS AND RESULT ARRAYS
@@ -148,8 +155,14 @@ def moving_window(
             progress_proxy.update(chunk_e - chunk_s)
 
 
+# numba.get_num_threads()
+# numba.set_num_threads(16)
+# numba.get_num_threads()
+
+
 @numba.njit(boundscheck=True)
 def local_max_sum_count(
+    chunk_idx,
     current_idx,  # those are
     start_idx,  # essentially
     end_idx,  # pointers to data
@@ -173,7 +186,7 @@ updater_results = DotDict(
     ),
 )
 
-# chunk_ends2 = np.array([[ 0, len(pivot) ]])
+
 with ProgressBar(
     total=len(pivot),
     desc=f"Getting stats in window {radii}",
@@ -185,8 +198,98 @@ with ProgressBar(
         updater,
         (trabant.dintensity, *tuple(updater_results.values())),
         False,
+        False,
         progress_proxy,
     )
+
+
+@numba.njit(boundscheck=True)
+def local_coloring(
+    chunk_idx,
+    current_idx,  # those are
+    start_idx,  # essentially
+    end_idx,  # pointers to data
+    # intensities,
+    max_colors,
+    colors,
+    color_collisions,
+    chunks,
+    # maxes,
+    # sums,
+    # counts,
+):
+    # maxes[current_idx] = max(maxes[current_idx], intensities[start_idx:end_idx].max())
+    # counts[current_idx] += end_idx - start_idx
+    # sums[current_idx] += intensities[start_idx:end_idx].sum()
+    chunks[current_idx] = chunk_idx
+    for w_idx in range(start_idx, end_idx):
+        if colors[current_idx] == 0:
+            if colors[w_idx] == 0:
+                max_colors[chunk_idx] += 1
+                colors[w_idx] = max_colors[chunk_idx]
+                colors[current_idx] = max_colors[chunk_idx]
+            else:
+                colors[current_idx] = colors[w_idx]
+
+        else:
+            if colors[w_idx] != 0:
+                if colors[w_idx] > colors[current_idx]:
+                    color_collisions[colors[w_idx]] = colors[current_idx]
+
+                elif colors[w_idx] < colors[current_idx]:
+                    color_collisions[colors[current_idx]] = colors[w_idx]
+
+            colors[w_idx] = colors[current_idx]
+
+
+updater2 = local_coloring
+updater2_results = DotDict(
+    max_colors=np.zeros(len(chunk_ends), dtype=np.uint64),
+    colors=np.zeros(len(pivot), np.uint32),
+    color_collisions=np.zeros(len(pivot), np.uint32),
+    chunks=np.zeros(len(pivot), get_min_int_data_type(len(chunk_ends) + 1)),
+)
+
+
+(
+    preprocessing_chunk_ends,
+    remaining_chunk_ends,
+) = pivot.divide_chunks_to_avoid_race_conditions(chunk_ends, radii)
+
+
+with ProgressBar(
+    total=len(pivot),
+    desc=f"Getting stats in window {radii}",
+) as progress_proxy:
+    moving_window(
+        preprocessing_chunk_ends,
+        diffs,
+        pivot.array,
+        updater2,
+        tuple(updater2_results.values()),
+        False,
+        False,
+        progress_proxy,
+    )
+
+
+with ProgressBar(
+    total=len(pivot),
+    desc=f"Getting stats in window {radii}",
+) as progress_proxy:
+    moving_window(
+        remaining_chunk_ends,
+        diffs,
+        pivot.array,
+        updater2,
+        tuple(updater2_results.values()),
+        False,
+        False,
+        progress_proxy,
+    )
+
+
+updater2_results.color_collisions.nonzero()
 
 
 updater_results.counts.max()

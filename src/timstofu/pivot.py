@@ -15,6 +15,7 @@ from dictodot import DotDict
 from timstofu.itertools import iter_stencil_indices
 from timstofu.math import div
 from timstofu.math import horner
+from timstofu.math import merge_intervals
 from timstofu.math import mod
 from timstofu.math import mod_then_div
 from timstofu.math import pack
@@ -179,24 +180,39 @@ class Pivot:
     def col2max(self):
         return DotDict(zip(self.columns, self.maxes))
 
-    def extract(self, column: str, out: NDArray | None = None) -> NDArray:
+    def extract(
+        self,
+        column: str,
+        out: NDArray | None = None,
+        indices: NDArray | slice | None = None,
+    ) -> NDArray:
+        """Extract the data from a given dimension.
+
+
+        Data is kept merged. So simply unmerge that part you want.
+
+        Parameters:
+            indices (NDArray|slice|None): A subset of array to consider.
+        """
         for k, col in enumerate(self.columns):
             if col == column:
                 break
         else:
             raise ValueError(f"Column `{column}` not among [{', '.join(self.columns)}]")
+
+        array = self.array if indices is None else self.array[indices]
         if out is None:
             out = np.empty(
-                shape=len(self.array),
+                shape=len(array),
                 dtype=get_min_int_data_type(self.maxes[k] - 1, signed=False),
             )
-        assert len(out) == len(self)
+        assert len(out) == len(array)
         if k == 0:
-            return div(self.array, math.prod(self.maxes[1:]), out)
+            return div(array, math.prod(self.maxes[1:]), out)
         if k == len(self.columns) - 1:
-            return mod(self.array, int(self.maxes[-1]), out)
+            return mod(array, int(self.maxes[-1]), out)
         return mod_then_div(
-            self.array,
+            array,
             math.prod(self.maxes[k:]),
             math.prod(self.maxes[k + 1 :]),
             out,
@@ -222,6 +238,64 @@ class Pivot:
             )
             for ii, last_radius in iter_stencil_indices(*radii.values())
         }
+
+    def divide_chunks_to_avoid_race_conditions(
+        self,
+        chunk_ends: NDArray,
+        radii: dict[str, int],
+    ) -> tuple[NDArray, NDArray]:
+        """Divide chunks of data to avoid race conditions.
+
+        Some operations might compete for filling value tables.
+        If that can happen, as with coloring, different threads might get into race conditions.
+        To avoid threads to work on the same data, it can make sense to split the chunks they are supposed to work on into pre-processing ones and the remained.
+        The fist group of indices are ascertained not to compete for results and prefill the results tables.
+        The remaining sets of indices are also ascertained not to compete for result tables and also will have well defined starting conditions.
+
+        Parameters:
+
+        """
+        assert (
+            len(chunk_ends.shape) == 2
+        ), "Chunks must be a 2D data: each row corresponds to start-end interval."
+        assert len(chunk_ends) > 1, "Submit chunks with more than one interval.)"
+        right_chunk_ends = chunk_ends[:-1, 1]
+        leading_dim_name = self.columns[0]
+        leading_dim_idx = get_index(self.counts[leading_dim_name])
+        leading_dim_values_at_right_chunk_ends = self.extract(
+            "tof", indices=right_chunk_ends
+        )
+
+        left_buffered_values = np.maximum(
+            leading_dim_values_at_right_chunk_ends - radii[leading_dim_name], 0
+        )
+        right_buffered_values = np.minimum(
+            leading_dim_values_at_right_chunk_ends + radii[leading_dim_name], len(self)
+        )
+
+        lefts = leading_dim_idx[left_buffered_values]
+        rights = leading_dim_idx[right_buffered_values]
+        lefts, rights = merge_intervals(
+            lefts, rights
+        )  # no need to optimize as long as chukns are separate.
+        preclustering_chunk_ends = np.stack((lefts, rights), axis=1)
+
+        remaining_ends = preclustering_chunk_ends.copy()
+        if chunk_ends[0, 0] < remaining_ends[0, 0]:
+            remaining_ends = np.insert(
+                remaining_ends, 0, (chunk_ends[0, 0], chunk_ends[0, 0]), axis=0
+            )
+        if remaining_ends[-1, -1] < chunk_ends[-1, -1]:
+            remaining_ends = np.append(
+                remaining_ends,
+                np.array([[chunk_ends[-1, -1], chunk_ends[-1, -1]]]),
+                axis=0,
+            )
+        remaining_chunk_ends = np.stack(
+            (remaining_ends[:-1, 1], remaining_ends[1:, 0]), axis=1
+        )
+
+        return preclustering_chunk_ends, remaining_chunk_ends
 
 
 def test_Pivot():
