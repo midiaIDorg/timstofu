@@ -4,6 +4,7 @@ import functools
 import math
 import numba
 import numpy as np
+import pandas as pd
 
 from dataclasses import dataclass
 from dataclasses import field
@@ -20,6 +21,7 @@ from timstofu.math import mod
 from timstofu.math import mod_then_div
 from timstofu.math import pack
 from timstofu.math import unpack_np
+from timstofu.misc import filtering_str
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import minimal_uint_type_from_list
 from timstofu.numba_helper import permute_into
@@ -65,6 +67,7 @@ class Pivot:
         assert set(self.columns) == set(
             self.counts
         ), "We work under assumptions that for each column there shall be a count. Use `.new` or adapt it."
+        self._indices = {}
 
     @classmethod
     def new(
@@ -143,6 +146,12 @@ class Pivot:
             self.permute(first_col_order)
         _grouped_sort(self.array, index, self.array)
 
+    def get_index(self, column):
+        assert column in self.columns, f"Accepted column names are `{self.column}`."
+        if column not in self._indices:
+            self._indices[column] = get_index(self.counts[column])
+        return self._indices[column]
+
     def is_sorted(self):
         return is_lex_nondecreasing(self.array)
 
@@ -172,9 +181,9 @@ class Pivot:
     def __len__(self):
         return len(self.array)
 
-    def index(self, column):
-        assert column in self.columns
-        return get_index(self.counts[column])
+    # def index(self, column):
+    #     assert column in self.columns
+    #     return get_index(self.counts[column])
 
     @property
     def col2max(self):
@@ -218,6 +227,29 @@ class Pivot:
             out,
         )
 
+    def decode(self, indices: NDArray):
+        if isinstance(indices, np.ndarray):
+            assert len(indices) > 0
+        return DotDict({c: self.extract(c, indices=indices) for c in self.columns})
+
+    def get_events_in_box(
+        self, center: dict[str, int], radii: dict[str, int]
+    ) -> pd.DataFrame:
+        leading_column = self.columns[0]
+        leading_column_idx = self.get_index(leading_column)
+        leading_event_value = center[leading_column]
+        filtering_criterion = filtering_str(radii, center)
+        events = pd.DataFrame(
+            self.decode(
+                indices=slice(
+                    leading_column_idx[leading_event_value - radii[leading_column]],
+                    leading_column_idx[leading_event_value + radii[leading_column] + 1],
+                )
+            ),
+            copy=False,
+        ).query(filtering_criterion)
+        return events, filtering_criterion
+
     def __getitem__(self, columns: str | list[str]) -> NDArray:
         if isinstance(columns, str):
             columns = [columns]
@@ -239,6 +271,7 @@ class Pivot:
             for ii, last_radius in iter_stencil_indices(*radii.values())
         }
 
+    # TODO: don't use that.
     def divide_chunks_to_avoid_race_conditions(
         self,
         chunk_ends: NDArray,
@@ -255,6 +288,7 @@ class Pivot:
         Parameters:
 
         """
+        raise NotImplementedError("This makes little sense to use.")
         assert (
             len(chunk_ends.shape) == 2
         ), "Chunks must be a 2D data: each row corresponds to start-end interval."

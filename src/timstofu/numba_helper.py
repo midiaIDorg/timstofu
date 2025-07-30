@@ -493,3 +493,12 @@ def _divide_indices(N: int, k: int = numba.get_num_threads()):
 def divide_indices(*args, **kwargs):
     indices = _divide_indices(*args, **kwargs)
     return np.array(indices, dtype=np.uintp)
+
+
+@numba.njit
+def filter_nb(xx, report_criterion):
+    results = []
+    for i, x in enumerate(xx):
+        if report_criterion(x):
+            results.append(i)
+    return results

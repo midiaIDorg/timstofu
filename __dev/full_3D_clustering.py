@@ -13,13 +13,16 @@ from dictodot import DotDict
 from numba_progress import ProgressBar
 from opentimspy import OpenTIMS
 
+
+# from timstofu.math import moving_window
 from timstofu.math import discretize
 from timstofu.math import log2
 from timstofu.math import merge_intervals
-
-# from timstofu.math import moving_window
+from timstofu.misc import filtering_str
+from timstofu.misc import get_max_count
 from timstofu.numba_helper import decount
 from timstofu.numba_helper import divide_indices
+from timstofu.numba_helper import filter_nb
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import is_permutation
 from timstofu.numba_helper import map_onto_lexsorted_indexed_data
@@ -73,7 +76,6 @@ trabant = pivot["dintensity"]
 # chunk_ends = divide_indices(len(pivot), k=16 * 100)
 chunk_ends = divide_indices(len(pivot), k=16)
 
-
 diffs_dct = pivot.get_stencil_diffs(**radii)
 diffs = np.array(list(diffs_dct.values()))
 # diffs = diffs[diffs >= 0]
@@ -125,7 +127,7 @@ def moving_window(
                 event_results[:] = 0  # ZERO OUT RESULTS
 
             # UPDATE INDEX: REMEMBER DATA IS STRICTLY INCREASING
-            for j in range(len(diffs)):
+            for j in range(len(diffs)):  # KEEPING DIFFS FLATTENED: PERHAPS NOT OPTIMAL?
                 t_s = center_val + diff_starts[j]  # TARGET START
                 t_e = center_val + diff_ends[j]  # TARGET END
 
@@ -150,6 +152,9 @@ def moving_window(
                         window_end,  # WINDOW TO ITERATE OVER
                         *updater_args,  # OTHER ARGUMENTS AND RESULT ARRAYS
                     )
+
+            # TODO: add a stats postprocessing step here.
+            # Update would need to take its args.
 
         if progress_proxy is not None:
             progress_proxy.update(chunk_e - chunk_s)
@@ -201,6 +206,39 @@ with ProgressBar(
         False,
         progress_proxy,
     )
+
+
+counts_val, counts_cnt = np.unique(updater_results.counts, return_counts=True)
+# is there no error in the code? radii suggests max count is:
+
+
+# Find that point and get its neighborhood.
+@numba.njit
+def equals_20(x):
+    return x == 20
+
+
+indices_with_20_neighbors = filter_nb(updater_results.counts, equals_20)
+
+
+events_to_check = pd.DataFrame(pivot.decode(indices_with_20_neighbors), copy=False)[
+    list(radii)
+]
+
+for event_to_check in events_to_check.to_dict(orient="records"):
+    events, filtering_criterion = pivot.get_events_in_box(
+        center=event_to_check, radii=radii
+    )
+    print(filtering_criterion)
+    print(events)
+    print()
+
+######
+# OK, so there is some error: this above shows we have 753 events in the radii specified region.
+
+
+###### And that storing data is ok.
+# TODO: make this into a check of course: extract voxels of a given size from around each event in some random sample.
 
 
 @numba.njit(boundscheck=True)
