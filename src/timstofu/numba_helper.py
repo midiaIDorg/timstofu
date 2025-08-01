@@ -313,6 +313,23 @@ def decount(xx: NDArray, counts: NDArray, _results: NDArray | None = None):
     return _results
 
 
+@numba.njit
+def repeat(counts: NDArray, results: NDArray):
+    """Opposite to melt for 1D data.
+
+    Equivalent of np.reapeat(xx, counts) that preserves dtype and allows use of a preallocated array.
+
+    Parameters:
+        counts (np.array): Array with numbers of repeats to perform for each element of xx.
+        _results (np.array): Optional preallocated place for keeping the resulting long format version of xx.
+    """
+    assert counts.sum() == len(results)
+    i = 0
+    for x, cnt in enumerate(counts):
+        results[i : i + cnt] = x
+        i += cnt
+
+
 def to_numpy(xx: NDArray | pd.Series):
     if isinstance(xx, pd.Series):
         xx = xx.to_numpy()

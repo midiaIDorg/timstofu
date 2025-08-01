@@ -174,10 +174,7 @@ def log2(xx):
 
 
 @numba.njit(parallel=True)
-def discretize(xx, res=None, transform=log2):
-    if res is None:
-        res = np.empty(shape=xx.shape, dtype=np.uint8)
-    assert len(res) == len(xx)
+def discretize(xx, res, transform=log2):
     _min, _max = _minmax(xx)
     _min = transform(_min)
     _max = transform(_max)
@@ -238,6 +235,18 @@ def test_merge_intervals():
     merged_lefts, merged_rights = merge_intervals(lefts, rights)
     np.testing.assert_equal(merged_lefts, [1, 5, 8, 13, 100])
     np.testing.assert_equal(merged_rights, [4, 6, 10, 16, 200])
+
+
+@numba.vectorize
+def bit_width(x: int) -> int:
+    """Return minimum number of bits required to store unsigned integer x (Numba-compatible)."""
+    if x == 0:
+        return np.uintp(1)
+    bits = 0
+    while x:
+        x >>= 1
+        bits += 1
+    return np.uintp(bits)
 
 
 ## Funny: operator.mod worked, but own function did not work.

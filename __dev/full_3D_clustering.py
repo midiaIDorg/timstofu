@@ -77,6 +77,8 @@ trabant = pivot["dintensity"]
 chunk_ends = divide_indices(len(pivot), k=16)
 
 diffs_dct = pivot.get_stencil_diffs(**radii)
+# error here.
+
 diffs = np.array(list(diffs_dct.values()))
 # diffs = diffs[diffs >= 0]
 
@@ -117,7 +119,7 @@ def moving_window(
         window_starts = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
         window_ends = np.full(len(diffs), chunk_s, data.dtype)  # INDEX
 
-        if densify:
+        if densify:  # useless test, remove it: should be some preprocessing.
             event_results = np.zeros(shape=(5, 5, 5), dtype=np.uintp)
 
         for c_idx in range(chunk_s, chunk_e):  # INDEX OF THE CURRENT WINDOW'S CENTER
@@ -142,7 +144,7 @@ def moving_window(
                 while window_ends[j] < chunk_e and np.intp(data[window_ends[j]]) <= t_e:
                     window_ends[j] += ONE
 
-            # UPDATE RESULTS
+            # UPDATE RESULTS: to keep it general, perhaps simply pass in window_starts, window_ends to one external function? Simpler???
             for window_start, window_end in zip(window_starts, window_ends):
                 if window_start < window_end:  # RUN UPDATER ONLY ON NON-EMPTY WINDOWS
                     updater(
@@ -232,6 +234,7 @@ for event_to_check in events_to_check.to_dict(orient="records"):
     print(filtering_criterion)
     print(events)
     print()
+
 
 ######
 # OK, so there is some error: this above shows we have 753 events in the radii specified region.

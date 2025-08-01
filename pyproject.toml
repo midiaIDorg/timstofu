@@ -29,7 +29,8 @@ dev = [
     "pytest",
     "ipython",
     "matplotlib",
-    "kilograms @git+https://github.com/midiaIDorg/kilograms.git"
+    "kilograms @git+https://github.com/midiaIDorg/kilograms.git",
+    "plotly",
 ]
 
 

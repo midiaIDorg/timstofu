@@ -227,6 +227,21 @@ class Pivot:
             out,
         )
 
+    @property
+    def leading_column(self):
+        return self.columns[0]
+
+    def get_chunk_ends(self, number_of_chunks: int) -> NDArray:
+        chunk_ends = self.get_index(self.leading_column)[
+            self.extract(
+                self.leading_column,
+                indices=np.linspace(0, len(self) - 1, number_of_chunks).astype(int)[
+                    :-1
+                ],
+            )
+        ]
+        return np.stack([chunk_ends, np.append(chunk_ends[1:], len(self))], axis=1)
+
     def decode(self, indices: NDArray):
         if isinstance(indices, np.ndarray):
             assert len(indices) > 0
@@ -235,6 +250,18 @@ class Pivot:
     def get_events_in_box(
         self, center: dict[str, int], radii: dict[str, int]
     ) -> pd.DataFrame:
+        """Extract all data from a box centered around a given point.
+
+        The point does not need to be in the dataset.
+        Box is centered at `center` and extends in each dimension by the same radius provided in `radii`.
+
+        Parameters:
+            center (dict): Mapping name of dimension to its value.
+            radii (dict): Extents of the box in each dimension.
+
+        Returns:
+            pd.DataFrame: A data frame with all points in the boxed pivot stores.
+        """
         leading_column = self.columns[0]
         leading_column_idx = self.get_index(leading_column)
         leading_event_value = center[leading_column]
@@ -270,6 +297,9 @@ class Pivot:
             )
             for ii, last_radius in iter_stencil_indices(*radii.values())
         }
+
+    def count_outer_groups(self):
+        raise NotImplementedError
 
     # TODO: don't use that.
     def divide_chunks_to_avoid_race_conditions(

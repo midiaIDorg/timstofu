@@ -87,9 +87,9 @@ print("Robust median estimate:", median_from_histogram(bin_edges, counts))
 
 x_grid = np.arange(-10, 11)
 y_grid = np.arange(-10, 11)
-z_grid = np.arange(-3, 4)
+z_grid = np.arange(-10, 11)
 
-probs = get_3D_probs(x_grid, y_grid, z_grid, 0, 2, 0, 2, (-3, 3))
+probs = get_3D_probs(x_grid, y_grid, z_grid, 0, 2, 0, 2, (-1, 2))
 counts = simulate_multinomial_from_grid(100, probs)
 
 x_marg, y_marg, z_marg = get_marginals(counts)

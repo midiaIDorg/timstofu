@@ -34,6 +34,16 @@ def _is_nondecreasing(xx):
     return True
 
 
+@numba.njit
+def increases(xx):
+    x_prev = -math.inf
+    for x in xx:
+        if x_prev >= x:
+            return False
+        x_prev = x
+    return True
+
+
 is_nondecreasing = inputs_series_to_numpy(_is_nondecreasing)
 
 
