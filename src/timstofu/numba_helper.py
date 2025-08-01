@@ -519,3 +519,9 @@ def filter_nb(xx, report_criterion):
         if report_criterion(x):
             results.append(i)
     return results
+
+
+@numba.njit
+def fill(X, xx, yy, ii):
+    for x, y, i in zip(xx, yy, ii):
+        X[x, y] += i

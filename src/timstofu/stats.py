@@ -249,7 +249,7 @@ def count_unique_for_indexed_data(
 
 
 @numba.njit(boundscheck=True)
-def get_index(counts: NDArray) -> NDArray:
+def get_index(counts: NDArray, index: NDArray | None = None) -> NDArray:
     """Turn counts into cumulated sums offset by one 0 at the beginning.
 
     This function should be used to create an indexed view of elements in another table where elements are in groups and counts summarizes how many times they occur in those groups.
@@ -257,11 +257,14 @@ def get_index(counts: NDArray) -> NDArray:
 
     Arguments:
         counts (NDArray): An array of counts.
+        index (NDArray|None): Optional place to store index.
 
     Returns:
         np.array: A table with 0 and then cumulated counts.
     """
-    index = np.empty(shape=len(counts) + 1, dtype=np.uint32)
+    if index is None:
+        index = np.empty(shape=len(counts) + 1, dtype=np.uint32)
+    assert len(index) == len(counts) + 1
     index[0] = 0
     i = 1
     for cnt in counts:

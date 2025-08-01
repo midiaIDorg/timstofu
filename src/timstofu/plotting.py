@@ -2,6 +2,7 @@ from numpy.typing import NDArray
 
 import itertools
 import math
+import numpy as np
 import pandas as pd
 
 
@@ -75,7 +76,6 @@ def plot_discrete_marginals(
 
 def df_to_plotly_scatterplot3D(
     df: pd.DataFrame,
-    show: bool = True,
     **kwargs,
 ):
     import plotly.graph_objects as go
@@ -107,8 +107,17 @@ def df_to_plotly_scatterplot3D(
         ),
         margin=dict(l=0, r=0, b=0, t=0),
     )
-
-    if show:
-        fig.show()
-
     return fig
+
+
+def plot_counts(counts, log_x=True, log_y=True, show=True):
+    import matplotlib.pyplot as plt
+
+    a, b = np.unique(counts, return_counts=True)
+    plt.plot(a, b)
+    if log_x:
+        plt.xscale("log")
+    if log_y:
+        plt.yscale("log")
+    if show:
+        plt.show()
