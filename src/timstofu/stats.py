@@ -124,6 +124,20 @@ def count1D(xx: NDArray, counts: NDArray | None = None):
 
 
 @numba.njit(boundscheck=True)
+def fill2Dcounts(
+    xx: NDArray,
+    yy: NDArray,
+    counts: NDArray,
+) -> None:
+    """
+    Count 2D stats of occurrences of tuples (x,y).
+    """
+    assert len(xx) == len(yy)
+    for i in range(len(xx)):
+        counts[xx[i], yy[i]] += 1
+
+
+@numba.njit(boundscheck=True)
 def _count2D(
     xx: NDArray,
     yy: NDArray,
@@ -135,7 +149,7 @@ def _count2D(
     assert len(xx) == len(yy)
     min_x, max_x = _minmax(xx)
     min_y, max_y = _minmax(yy)
-    cnts = np.zeros(dtype=np.uint64, shape=(max_x + 1, max_y + 1))
+    cnts = np.zeros(dtype=dtype, shape=(max_x + 1, max_y + 1))
 
     for i in range(len(xx)):
         cnts[xx[i], yy[i]] += 1
@@ -381,3 +395,33 @@ def get_unique_cnts_in_groups(xx_index: NDArray, yy: NDArray):
                 unique_y_per_x[i] += 1
             y_prev = y
     return unique_y_per_x
+
+
+@numba.njit
+def roll(X, k):
+    assert k > 0
+    for i in range(len(X), k - 1, -1):
+        X[i] = X[i - k]
+    for i in range(k):
+        X[i] = 0
+
+
+@numba.njit
+def inplace_cumsum(X):
+    for i in range(1, len(X)):
+        X[i] += X[i - 1]
+
+
+@numba.njit
+def counts2index(X) -> None:
+    X = X.ravel()
+    inplace_cumsum(X)
+    roll(X, 1)
+
+
+def test_counts2index():
+    test = np.arange(1, 11).reshape((2, 5))
+    w = np.cumsum(test)[:-1]
+    counts2index(test)
+    np.testing.assert_equal(test.ravel()[1:], w)
+    assert test[0, 0] == 0

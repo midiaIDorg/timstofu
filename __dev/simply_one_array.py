@@ -24,13 +24,14 @@ from timstofu.math import log2
 from timstofu.math import merge_intervals
 from timstofu.misc import filtering_str
 from timstofu.misc import get_max_count
-from timstofu.misc import split_array
+from timstofu.misc import iter_array_splits
 from timstofu.numba_helper import divide_indices
 from timstofu.numba_helper import filter_nb
 from timstofu.numba_helper import get_min_int_data_type
 from timstofu.numba_helper import is_permutation
 from timstofu.numba_helper import map_onto_lexsorted_indexed_data
 from timstofu.numba_helper import melt
+from timstofu.numba_helper import overwrite
 from timstofu.numba_helper import permute_inplace
 from timstofu.numba_helper import repeat
 from timstofu.pivot import Pivot
@@ -45,6 +46,7 @@ from timstofu.sort_and_pepper import is_nondecreasing
 from timstofu.sort_array_ops import is_lex_increasing
 from timstofu.stats import _count1D
 from timstofu.stats import count1D
+from timstofu.stats import count2D
 from timstofu.stats import count2D_marginals
 from timstofu.stats import get_index
 from timstofu.timstofmisc import deduce_shift_and_spacing
@@ -63,6 +65,7 @@ data[:, 0] //= ms1_spacing
 if discretize_intensity:
     discretize(data[:, 3], data[:, 3], transform=log2)
 
+
 data_pd = pd.DataFrame(data, copy=False, columns=["urt", "scan", "tof", "dintensity"])
 assert np.shares_memory(
     data_pd.to_numpy(), data
@@ -74,59 +77,183 @@ maxes = data_pd.max()
 tof_counts = count1D(data_pd.tof)
 tof_index = get_index(tof_counts)
 
-##### SORTING
-# This is tof_frame_scan_order as data was frame-scan-tof ordered and our sort is stable.
+##### SORTING: data was frame-scan-tof ordered and our sort is stable, so ...
 tof_frame_scan_order = argcountsort(data[:, 2], tof_counts)
-data[:, 3] = data[tof_frame_scan_order, 3]  # satellite data: can stay where it is
-data[:, 2] = data[tof_frame_scan_order, 1]
-data[:, 1] = data[tof_frame_scan_order, 0]
-repeat(
-    counts=tof_counts, results=data[:, 0]
-)  # direct application on dims and construction.
-data_pd.columns = ["tof", "urt", "scan", "intensity"]
 
+data[:, 3] = data[tof_frame_scan_order, 3]  # satellite data: can stay where it is
+data[:, 2] = data[tof_frame_scan_order, 1]  # moving scans down
+data[:, 1] = data[tof_frame_scan_order, 0]  # moving urts down
+repeat(counts=tof_counts, results=data[:, 0])  # re-constructing tofs
+data_pd.columns = ["tof", "urt", "scan", "intensity"]
 assert is_lex_increasing(data), "Data was not lex sorted by tof-frame-scan."
-######
 # plot_counts(counts.tof)
 
-leading_index = tof_index
-leading_index_splits = split_array(leading_index, 16, right_buffer=1)
-empty_inner_index_count = np.zeros(maxes.urt + 1, data.dtype)
+
+tof_urt_counts, *_ = count2D(data_pd.tof, data_pd.urt, get_min_int_data_type(len(data)))
+
+scans_no, scans_cnt = np.unique(tof_urt_counts, return_counts=True)
+
+plt.scatter(scans_no, scans_cnt)
+plt.xlabel("Number of scans per tof-urt")
+plt.ylabel("count")
+plt.yscale("log")
+plt.show()
+
+# TODO on Monday: try to prepare some operations on it.
+
+
+dim_names = data_pd.columns[:3]
+x_index = tof_index# I have to split those pairs smaller ones.
+
+
+
+def split_contiguous_by_total_count(counts, k):
+    counts = np.asarray(counts)
+    total = counts.sum()
+    target = total / k
+    cumsum = np.cumsum(counts)
+
+    split_indices = [0]
+    last_split = 0
+
+    for _ in range(1, k):
+        # Find the split point that brings the sum closest to the next multiple of target
+        ideal = split_indices[-1] + np.searchsorted(cumsum[last_split:], cumsum[last_split] + target)
+        # Clip to ensure it's strictly increasing
+        ideal = min(len(counts), max(ideal, last_split + 1))
+        split_indices.append(ideal)
+        last_split = ideal
+
+    split_indices.append(len(counts))  # Ensure the last segment ends at the array end
+
+    # Slice the array
+    chunks = [counts[split_indices[i]:split_indices[i+1]] for i in range(k)]
+
+    return chunks, np.array(split_indices)
+
+
+len(tof_counts)
+tof_index
+chunks, split_points = split_contiguous_by_total_count(tof_counts, 16)
+
+tof_index[split_points]
+
+
+for i, (chunk, start, end) in enumerate(zip(chunks, split_points[:-1], split_points[1:])):
+    print(f"Chunk {i}: counts[{start}:{end}] = {chunk}, sum = {chunk.sum()}")
+    print(tof_index[start:end])
+    print(np.diff(tof_index[start:end]))
+    print()
+
+
+get_index(np.array(list(map(np.sum, chunks))))
+tof_index
+
+tof_counts
+x_index[len(x_index) - 2]
+
+size, remainder = divmod(len(x_index) - 2, 16)
+k = 16
+N = len(x_index)-1
+q, r = divmod(N, k)
+
+starts = []
+start = 0
+for i in range(k):
+    end = start + q + (1 if i < r else 0)
+    starts.append(start)
+    start = end
+
+
+min_x = 0
+max_x =
+len(x_index)-1
+
+
+x_start_end_tuples = np.array(list(iter_array_splits(x_index, k=16)))
+x_start_end_tuples[:,1] += 1
+
+
+
+x_index[:-1]
+N = len(x_index)-1
+k = 16
+
+
+size, remainder = divmod(N,k)
+np.arange(0, N, size)
+
+
+
+
+N // 16
+N / 16
+N % 16 to first those add 1
+
+
+
+
+for s, e in x_start_end_tuples:
+    print(s, e, x_index[s:e])
+# what do I need splits for then? I only need start ends.
+
+
+w = x_indices[0][1]
+w[len(w) : len(w) + 1]
 
 
 @numba.njit(parallel=True, boundscheck=True)
 def moving_widow(
     data,
-    leading_index_splits,
-    empty_inner_index_count,
+    x_index,
+    x_start_end_tuples,
+    x_radius,
+    y_radius,
+    z_radius,
+    x_max,
+    y_max,
+    z_max,
     # foo,
     # foo_args=(),
     progress_proxy=None,
 ):
-    for split_idx in numba.prange(len(leading_index_splits)):
-        leading_index = leading_index_splits[split_idx]
-        inner_index_count = empty_inner_index_count.copy()
-        for leading_idx in range(len(leading_index) - 1):
-            # current tof range
-            s0 = leading_index[leading_idx]
-            o0 = leading_index[leading_idx + 1]
+    """event = (x,y,z,intensity)"""
+    yy = data[:, 1]
+    for split_s, split_e in numba.prange(len(x_start_end_tuples)):
+        y_counts = np.zeros(y_max + 1, data.dtype)
+        y_indices = np.zeros((x_radius * 2 + 1, len(y_counts) + 1), data.dtype)
 
-            # count tof specific urts
-            # build urt index
-            inner_index_count[:] = 0
-            _count1D(data[s0:o0, 1], inner_index_count)
+        events_visited = 0
+        for x in range(split_s, split_e):
+            sx = x_index[split_idx]  # start of x in data
+            ox = x_index[split_idx + 1]  # end of x in data
 
-            # for idx in range(s0, o0):
-            #     tof, urt, scan, intensity = data[idx]
+            y_counts[:] = 0
+            _count1D(yy[sx:ox], y_counts)  # x conditioned y counts
 
-            # foo(idx, thr_densifier, *foo_args)
+            y_indices[:, 0] = 0
+            get_index(y_counts, dx_y_index[0])  # x conditioned y index
 
-            # for idx in range(start_idx, end_idx):  # thr_densifier[:] = 0 equivalent.
-            #     tof, urt, scan, intensity = data[idx]
-            #     thr_densifier[urt, scan] = 0
+            for idx in range(sx, ox):  # idx are where tof is fixed
+                pass
+
+            events_visited += ox - sx
 
         if progress_proxy is not None:
-            progress_proxy.update(index[-1] - index[0])
+            progress_proxy.update(events_visited)
+
+
+with ProgressBar(
+    total=len(data),
+    desc=f"moving widow",
+) as progress_proxy:
+    moving_widow(
+        data,
+        x_index_splits,
+        *(radii[dim] for dim in dim_names),
+        *(maxes[dim] for dim in dim_names),
+        progress_proxy,
+    )
 
 
 @numba.njit
@@ -143,7 +270,7 @@ with ProgressBar(
 ) as progress_proxy:
     moving_widow(
         data,
-        leading_index_splits,
+        x_indices_splits,
         densifier,
         test,
         tuple(*test_args.values()),

@@ -1,4 +1,10 @@
+import numba
+import numpy as np
+
+from collections.abc import Sized
+from dictodot import DotDict
 from numpy.typing import NDArray
+from typing import Iterable
 
 
 def is_data_dict(dct: dict[str, NDArray]) -> bool:
@@ -24,17 +30,27 @@ def get_max_count(radii: dict[str, int]) -> int:
     return int(np.prod((np.array(list(radii.values())) + 1) * 2))
 
 
-def split_array(arr: NDArray, k: int, right_buffer: int = 0) -> list[NDArray]:
+@numba.njit
+def iter_array_splits(N: NDArray, k: int) -> Iterable[tuple[NDArray, int]]:
     """
-    Split a 1D NumPy array into `k` approximately equal chunks.
+    Split a number N into `k` approximately equal chunks.
     The first chunks will be slightly larger if N is not divisible by k.
     """
-    N = len(arr)
     q, r = divmod(N, k)  # q = base size, r = remainder
-    splits = []
     start = 0
     for i in range(k):
         end = start + q + (1 if i < r else 0)
-        splits.append(arr[start : end + right_buffer])
+        yield start, end
         start = end
-    return splits
+
+
+def matrix_to_data_dict(
+    matrix: NDArray,
+    columns: list[str] | tuple[str, ...],
+) -> DotDict[str, NDArray]:
+    assert len(matrix.shape) == 2
+    assert matrix.shape[1] == len(columns)
+    dd = DotDict()
+    for i, col in enumerate(columns):
+        dd[col] = matrix[:, i]
+    return dd

@@ -11,10 +11,9 @@ from numpy.typing import NDArray
 
 
 @numba.njit
-def overwrite(xx, what_with=0):
+def overwrite(xx: NDArray, _with=0) -> None:
     for i in range(len(xx)):
-        xx[i] = what_with
-    return xx
+        xx[i] = _with
 
 
 @numba.njit
