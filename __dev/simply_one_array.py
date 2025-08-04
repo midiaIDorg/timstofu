@@ -88,20 +88,6 @@ data_pd.columns = ["tof", "urt", "scan", "intensity"]
 assert is_lex_increasing(data), "Data was not lex sorted by tof-frame-scan."
 # plot_counts(counts.tof)
 
-
-tof_urt_counts, *_ = count2D(data_pd.tof, data_pd.urt, get_min_int_data_type(len(data)))
-
-scans_no, scans_cnt = np.unique(tof_urt_counts, return_counts=True)
-
-plt.scatter(scans_no, scans_cnt)
-plt.xlabel("Number of scans per tof-urt")
-plt.ylabel("count")
-plt.yscale("log")
-plt.show()
-
-# TODO on Monday: try to prepare some operations on it.
-
-
 dim_names = data_pd.columns[:3]
 x_index = tof_index# I have to split those pairs smaller ones.
 

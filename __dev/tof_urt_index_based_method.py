@@ -103,39 +103,29 @@ counts2index(tof_urt)
 chunks = divide_indices(len(D))
 
 
-# xy2idx = tof_urt
-# X_RADIUS, Y_RADIUS, Z_RADIUS = radii.tof, radii.urt, radii.scan
-
-
 # TODO: make xy2idx on the flight: save on RAM
 @numba.njit(parallel=True, boundscheck=True)
-def moving_widow(D, chunks, xy2idx, radii, foo, foo_args=(), progress=None):
-    X_RADIUS, Y_RADIUS, Z_RADIUS = radii
-    MIN_X = np.intp(0)
-    MIN_Y = np.intp(0)
-    MIN_Z = np.intp(0)
+def moving_widow(
+    xx, yy, zz, x_tol, y_tol, z_tol, chunks, xy2idx, foo, foo_args=(), progress=None
+):
+    MIN_X = MIN_Y = MIN_Z = np.intp(0)
     MAX_X = np.intp(xy2idx.shape[0])
     MAX_Y = np.intp(xy2idx.shape[1] - 1)
-    XX = D[:, 0]
-    YY = D[:, 1]
-    ZZ = D[:, 2]
-    INTENSITIES = D[:, 3]
 
     for chunk_idx in numba.prange(len(chunks)):
         chunk_start, chunk_end = chunks[chunk_idx]
 
         for center_idx in range(chunk_start, chunk_end):
-            X = np.intp(XX[center_idx])
-            Y = np.intp(YY[center_idx])
-            Z = np.intp(ZZ[center_idx])
-            I = np.intp(INTENSITIES[center_idx])
+            X = np.intp(xx[center_idx])
+            Y = np.intp(yy[center_idx])
+            Z = np.intp(zz[center_idx])
 
-            min_x = max(X - X_RADIUS, MIN_X)
-            max_x = min(X + X_RADIUS + 1, MAX_X)
-            min_y = max(Y - Y_RADIUS, MIN_Y)
-            max_y = min(Y + Y_RADIUS + 1, MAX_Y)
-            min_z = Z - Z_RADIUS
-            max_z = Z + Z_RADIUS
+            min_x = max(X - x_tol, MIN_X)
+            max_x = min(X + x_tol + 1, MAX_X)
+            min_y = max(Y - y_tol, MIN_Y)
+            max_y = min(Y + y_tol + 1, MAX_Y)
+            min_z = Z - z_tol
+            max_z = Z + z_tol
 
             for x in range(min_x, max_x):
                 for y in range(min_y, max_y):
@@ -145,7 +135,7 @@ def moving_widow(D, chunks, xy2idx, radii, foo, foo_args=(), progress=None):
                     for stencil_idx in range(s_idx, e_idx):
                         # linear search: given low occupation of tof-urt cells,
                         # PROBABLY faster than doing binary search. DEFINITELY SIMPLER.
-                        z = ZZ[stencil_idx]
+                        z = zz[stencil_idx]
                         if z > max_z:
                             break
                         if z >= min_z:  # call foo only on nonzero intensities
@@ -173,10 +163,14 @@ with ProgressBar(
     desc=f"Getting stats in window {dict(radii)}",
 ) as progress:
     moving_widow(
-        D,
+        data.tof,
+        data.urt,
+        data.scan,
+        radii.tof,
+        radii.urt,
+        radii.scan,
         chunks,
         tof_urt,
-        np.array((radii.tof, radii.urt, radii.scan)),
         get_neighbor_stats,
         (D, *neighbor_stats.values()),
         progress,
@@ -214,3 +208,6 @@ for i, idx in enumerate(tqdm(indices_of_random_events)):
     assert random_calculated.counts[i] == len(tof_local_df)
     assert random_calculated.maxes[i] == tof_local_df.intensity.max()
     assert random_calculated.sums[i] == tof_local_df.intensity.sum()
+
+
+## NOW, how the pltos look like?
