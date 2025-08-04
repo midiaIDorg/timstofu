@@ -15,7 +15,7 @@ from dictodot import DotDict
 from numba_progress import ProgressBar
 from numpy.typing import NDArray
 from opentimspy import OpenTIMS
-
+from tqdm import tqdm
 
 # from timstofu.math import moving_window
 from timstofu.math import _minmax
@@ -102,70 +102,72 @@ tof_urt_size, tof_urt_size_cnt = np.unique(tof_urt, return_counts=True)
 counts2index(tof_urt)
 chunks = divide_indices(len(D))
 
-# radii = (radii.tof, radii.urt, radii.scan)
+
 # xy2idx = tof_urt
+# X_RADIUS, Y_RADIUS, Z_RADIUS = radii.tof, radii.urt, radii.scan
 
 
+# TODO: make xy2idx on the flight: save on RAM
 @numba.njit(parallel=True, boundscheck=True)
 def moving_widow(D, chunks, xy2idx, radii, foo, foo_args=(), progress=None):
-    xrad, yrad, zrad = radii
-    # xrad, yrad, zrad = 1,10,20
+    X_RADIUS, Y_RADIUS, Z_RADIUS = radii
     MIN_X = np.intp(0)
     MIN_Y = np.intp(0)
     MIN_Z = np.intp(0)
-    MAX_X = np.intp(xy2idx.shape[0] - 1)
-    MAX_Y = np.intp(xy2idx.shape[1] - 2)
+    MAX_X = np.intp(xy2idx.shape[0])
+    MAX_Y = np.intp(xy2idx.shape[1] - 1)
+    XX = D[:, 0]
+    YY = D[:, 1]
+    ZZ = D[:, 2]
+    INTENSITIES = D[:, 3]
 
     for chunk_idx in numba.prange(len(chunks)):
         chunk_start, chunk_end = chunks[chunk_idx]
 
         for center_idx in range(chunk_start, chunk_end):
-            X = np.intp(D[center_idx, 0])
-            Y = np.intp(D[center_idx, 1])
-            Z = np.intp(D[center_idx, 2])
-            I = np.intp(D[center_idx, 3])
+            X = np.intp(XX[center_idx])
+            Y = np.intp(YY[center_idx])
+            Z = np.intp(ZZ[center_idx])
+            I = np.intp(INTENSITIES[center_idx])
 
-            min_x = max(X - xrad, MIN_X)
-            max_x = min(X + xrad + 1, MAX_X)
-            min_y = max(Y - yrad, MIN_Y)
-            max_y = min(Y + yrad + 1, MAX_Y)
-            min_z = min(Z - zrad, MIN_Z)
-            max_z = Z + zrad
+            min_x = max(X - X_RADIUS, MIN_X)
+            max_x = min(X + X_RADIUS + 1, MAX_X)
+            min_y = max(Y - Y_RADIUS, MIN_Y)
+            max_y = min(Y + Y_RADIUS + 1, MAX_Y)
+            min_z = Z - Z_RADIUS
+            max_z = Z + Z_RADIUS
 
             for x in range(min_x, max_x):
                 for y in range(min_y, max_y):
                     s_idx = xy2idx[x, y]
                     e_idx = xy2idx[x, y + 1]
+                    # TODO: if x,y the same as previously, simply reuse idx of last smallest z.
                     for stencil_idx in range(s_idx, e_idx):
-                        z = D[s_idx, 3]
+                        # linear search: given low occupation of tof-urt cells,
+                        # PROBABLY faster than doing binary search. DEFINITELY SIMPLER.
+                        z = ZZ[stencil_idx]
                         if z > max_z:
                             break
-                        if z >= min_z:
+                        if z >= min_z:  # call foo only on nonzero intensities
                             foo(center_idx, stencil_idx, *foo_args)
-                        s_idx += 1
-
-                        # try replacing with linear search...
-                        # s_idx += np.searchsorted(D[s_idx:e_idx, 3], Z - zrad)
-                        # for stencil_idx in range(s_idx, e_idx):
-                        #     z = np.intp(D[stencil_idx, 3])
-                        #     if abs(z - Z) > zrad:
-                        #         break
-                        #     foo(center_idx, stencil_idx, *foo_args)
 
         if progress is not None:
             progress.update(chunk_end - chunk_start)
 
 
 @numba.njit
-def get_neighbor_stats(center_idx, event_idx, counts):
+def get_neighbor_stats(center_idx, stencil_idx, D, counts, maxes, sums):
     counts[center_idx] += 1
+    stencil_intensity = D[stencil_idx, 3]
+    maxes[center_idx] = max(maxes[center_idx], stencil_intensity)
+    sums[center_idx] += stencil_intensity
 
 
 neighbor_stats = DotDict(
-    counts=np.zeros(len(D), get_min_int_data_type(maxes.intensity))
+    counts=np.zeros(len(D), get_min_int_data_type(maxes.intensity)),
+    maxes=np.zeros(len(D), get_min_int_data_type(maxes.intensity)),
+    sums=np.zeros(len(D), get_min_int_data_type(maxes.intensity)),
 )
-# foo_args = (neighbor_stats,)
-
 with ProgressBar(
     total=len(D),
     desc=f"Getting stats in window {dict(radii)}",
@@ -176,14 +178,39 @@ with ProgressBar(
         tof_urt,
         np.array((radii.tof, radii.urt, radii.scan)),
         get_neighbor_stats,
-        tuple(neighbor_stats.values()),
+        (D, *neighbor_stats.values()),
         progress,
     )
 
-neighbor_stats.counts.nonzero()
+
+(neighbor_stats.counts == 0).nonzero()
 counts_val, counts_freq = np.unique(neighbor_stats.counts, return_counts=True)
 
-plt.scatter(counts_val, counts_freq)
+plt.plot(counts_val, counts_freq)
 plt.show()
 
-# Now, implement the stupid test of similarity.
+# Now, implement the test comparing direct and indirect calc.
+
+K = 10000
+indices_of_random_events = np.sort(np.random.choice(len(D), size=K))
+random_calculated = DotDict(
+    {c: arr[indices_of_random_events] for c, arr in neighbor_stats.items()}
+)
+tof_counts = count1D(data.tof)
+tof_index = get_index(tof_counts)
+dpd = pd.DataFrame(D, copy=False, columns=["tof", "urt", "scan", "intensity"])
+expected = DotDict(
+    maxes=np.zeros(len(indices_of_random_events), np.uint32),
+    sums=np.zeros(len(indices_of_random_events), np.uint32),
+    counts=np.zeros(len(indices_of_random_events), np.uint32),
+)
+for i, idx in enumerate(tqdm(indices_of_random_events)):
+    TOF, URT, SCAN, INTENSITY = D[idx]
+    MIN_IDX = tof_index[max(TOF - radii.tof, 0)]
+    MAX_IDX = tof_index[TOF + radii.tof + 1]
+    tof_local_df = dpd.iloc[MIN_IDX:MAX_IDX].query(
+        f"abs({TOF}-tof) <= {radii.tof} and abs({URT}-urt) <= {radii.urt} and abs({SCAN}-scan) <= {radii.scan}"
+    )
+    assert random_calculated.counts[i] == len(tof_local_df)
+    assert random_calculated.maxes[i] == tof_local_df.intensity.max()
+    assert random_calculated.sums[i] == tof_local_df.intensity.sum()
