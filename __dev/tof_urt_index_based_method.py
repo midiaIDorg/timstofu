@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from dictodot import DotDict
+from kilograms import scatterplot_matrix
 from numba_progress import ProgressBar
 from numpy.typing import NDArray
 from opentimspy import OpenTIMS
@@ -54,11 +55,19 @@ from timstofu.stats import counts2index
 from timstofu.stats import fill2Dcounts
 from timstofu.stats import get_index
 from timstofu.timstofmisc import deduce_shift_and_spacing
+from timstofu.windowing import (
+    assert_local_counts_maxes_sums_are_as_with_direct_calculation,
+)
+from timstofu.windowing import get_local_counts_maxes_sums
+from timstofu.windowing import moving_window
 
+show_plots = False
 paranoid = False
 discretize_intensity = False
 folder_dot_d = "/home/matteo/data_for_midiaID/F9477.d"
-radii = DotDict(tof=1, scan=20, urt=10)
+# RADIUS = DotDict(tof=3, urt=10, scan=40)
+RADIUS = DotDict(tof=1, urt=10, scan=20)
+get_max_count(RADIUS)
 
 # TODO: ask Michal to allow to get the order we want: will save only a bit of RAM.
 data_handler = OpenTIMS(folder_dot_d)
@@ -72,7 +81,7 @@ D[:, 0] //= ms1_spacing
 if discretize_intensity:
     discretize(D[:, 4], D[:, 4], transform=log2)
 
-maxes = DotDict(zip(["urt", "scan", "tof", "intensity"], D.max(axis=0)))
+MAX = DotDict(zip(["urt", "scan", "tof", "intensity"], D.max(axis=0)))
 tof_counts = count1D(D[:, 2])
 # tof_index = get_index(tof_counts)
 
@@ -84,130 +93,138 @@ D[:, 2] = D[tof_frame_scan_order, 1]  # moving scans down
 D[:, 1] = D[tof_frame_scan_order, 0]  # moving urts down
 repeat(counts=tof_counts, results=D[:, 0])  # re-constructing tofs
 assert is_lex_increasing(D), "Data was not lex sorted by tof-frame-scan."
+raw = matrix_to_data_dict(D, ["tof", "urt", "scan", "intensity"])
 # plot_counts(counts.tof)
 
-data = matrix_to_data_dict(D, ["tof", "urt", "scan", "intensity"])
-tof_urt = np.zeros(
-    (maxes.tof + 1, maxes.urt + 1 + 1),  # +1 to avoid X[len(X)], +1 to allow index.
-    get_min_int_data_type(len(D)),
-)
-fill2Dcounts(data.tof, data.urt, tof_urt)
-
+tof_urt = np.zeros((MAX.tof + 1, MAX.urt + 2), get_min_int_data_type(len(D)))
+fill2Dcounts(raw.tof, raw.urt, tof_urt)
 perc_of_urt_tof_occupied = round(
     np.count_nonzero(tof_urt) / np.prod(tof_urt.shape) * 100, 1
 )
 print(f"The tof-urt counts are occupied at {perc_of_urt_tof_occupied}%.")
 tof_urt_size, tof_urt_size_cnt = np.unique(tof_urt, return_counts=True)
-
 counts2index(tof_urt)
-chunks = divide_indices(len(D))
 
 
-# TODO: make xy2idx on the flight: save on RAM
-@numba.njit(parallel=True, boundscheck=True)
-def moving_widow(
-    xx, yy, zz, x_tol, y_tol, z_tol, chunks, xy2idx, foo, foo_args=(), progress=None
-):
-    MIN_X = MIN_Y = MIN_Z = np.intp(0)
-    MAX_X = np.intp(xy2idx.shape[0])
-    MAX_Y = np.intp(xy2idx.shape[1] - 1)
-
-    for chunk_idx in numba.prange(len(chunks)):
-        chunk_start, chunk_end = chunks[chunk_idx]
-
-        for center_idx in range(chunk_start, chunk_end):
-            X = np.intp(xx[center_idx])
-            Y = np.intp(yy[center_idx])
-            Z = np.intp(zz[center_idx])
-
-            min_x = max(X - x_tol, MIN_X)
-            max_x = min(X + x_tol + 1, MAX_X)
-            min_y = max(Y - y_tol, MIN_Y)
-            max_y = min(Y + y_tol + 1, MAX_Y)
-            min_z = Z - z_tol
-            max_z = Z + z_tol
-
-            for x in range(min_x, max_x):
-                for y in range(min_y, max_y):
-                    s_idx = xy2idx[x, y]
-                    e_idx = xy2idx[x, y + 1]
-                    # TODO: if x,y the same as previously, simply reuse idx of last smallest z.
-                    for stencil_idx in range(s_idx, e_idx):
-                        # linear search: given low occupation of tof-urt cells,
-                        # PROBABLY faster than doing binary search. DEFINITELY SIMPLER.
-                        z = zz[stencil_idx]
-                        if z > max_z:
-                            break
-                        if z >= min_z:  # call foo only on nonzero intensities
-                            foo(center_idx, stencil_idx, *foo_args)
-
-        if progress is not None:
-            progress.update(chunk_end - chunk_start)
-
-
-@numba.njit
-def get_neighbor_stats(center_idx, stencil_idx, D, counts, maxes, sums):
-    counts[center_idx] += 1
-    stencil_intensity = D[stencil_idx, 3]
-    maxes[center_idx] = max(maxes[center_idx], stencil_intensity)
-    sums[center_idx] += stencil_intensity
-
-
-neighbor_stats = DotDict(
-    counts=np.zeros(len(D), get_min_int_data_type(maxes.intensity)),
-    maxes=np.zeros(len(D), get_min_int_data_type(maxes.intensity)),
-    sums=np.zeros(len(D), get_min_int_data_type(maxes.intensity)),
+neighbor_stats = get_local_counts_maxes_sums(
+    raw.tof,
+    raw.urt,
+    raw.scan,
+    raw.intensity,
+    RADIUS.tof,
+    RADIUS.urt,
+    RADIUS.scan,
+    tof_urt,
 )
-with ProgressBar(
-    total=len(D),
-    desc=f"Getting stats in window {dict(radii)}",
-) as progress:
-    moving_widow(
-        data.tof,
-        data.urt,
-        data.scan,
-        radii.tof,
-        radii.urt,
-        radii.scan,
-        chunks,
-        tof_urt,
-        get_neighbor_stats,
-        (D, *neighbor_stats.values()),
-        progress,
-    )
-
-
-(neighbor_stats.counts == 0).nonzero()
+assert np.all(neighbor_stats.counts)
 counts_val, counts_freq = np.unique(neighbor_stats.counts, return_counts=True)
+if show_plots:
+    plt.plot(counts_val, counts_freq)
+    plt.show()
 
-plt.plot(counts_val, counts_freq)
-plt.show()
-
-# Now, implement the test comparing direct and indirect calc.
-
-K = 10000
-indices_of_random_events = np.sort(np.random.choice(len(D), size=K))
-random_calculated = DotDict(
-    {c: arr[indices_of_random_events] for c, arr in neighbor_stats.items()}
+assert_local_counts_maxes_sums_are_as_with_direct_calculation(
+    neighbor_stats,
+    raw.tof,
+    raw.urt,
+    raw.scan,
+    raw.intensity,
+    RADIUS.tof,
+    RADIUS.urt,
+    RADIUS.scan,
+    number_of_random_sampled_events=10_000,
 )
-tof_counts = count1D(data.tof)
-tof_index = get_index(tof_counts)
-dpd = pd.DataFrame(D, copy=False, columns=["tof", "urt", "scan", "intensity"])
-expected = DotDict(
-    maxes=np.zeros(len(indices_of_random_events), np.uint32),
-    sums=np.zeros(len(indices_of_random_events), np.uint32),
-    counts=np.zeros(len(indices_of_random_events), np.uint32),
-)
-for i, idx in enumerate(tqdm(indices_of_random_events)):
-    TOF, URT, SCAN, INTENSITY = D[idx]
-    MIN_IDX = tof_index[max(TOF - radii.tof, 0)]
-    MAX_IDX = tof_index[TOF + radii.tof + 1]
-    tof_local_df = dpd.iloc[MIN_IDX:MAX_IDX].query(
-        f"abs({TOF}-tof) <= {radii.tof} and abs({URT}-urt) <= {radii.urt} and abs({SCAN}-scan) <= {radii.scan}"
-    )
-    assert random_calculated.counts[i] == len(tof_local_df)
-    assert random_calculated.maxes[i] == tof_local_df.intensity.max()
-    assert random_calculated.sums[i] == tof_local_df.intensity.sum()
 
 
 ## NOW, how the pltos look like?
+neighbor_stats_pd = pd.DataFrame(neighbor_stats, copy=False)
+np.unique(raw.intensity == neighbor_stats.maxes, return_counts=True)
+
+
+res = pd.DataFrame()
+res["counts"] = neighbor_stats.counts
+res["log_counts"] = np.log10(neighbor_stats.counts)
+res["log_TIC"] = np.log10(neighbor_stats.sums)
+res["log_max_intensity"] = np.log10(neighbor_stats.maxes)
+scatterplot_matrix(res)
+
+
+# GETTING LOCAL MAXIMA
+def get_box_centers(*radius_buffer_max):
+    yield from itertools.product(
+        *(range(r + 1, m, 2 * (r + b)) for r, b, m in radius_buffer_max)
+    )
+
+
+@numba.njit(parallel=True, boundscheck=True)
+def get_argmaxes(
+    intensities, xy2index, x_centers, y_centers, top_intense_event_indices
+):
+    assert len(x_centers) == len(y_centers)
+    for i in range(len(x_centers)):
+        x = x_centers[i]
+        y = y_centers[i]
+        s = xy2index[x, y]
+        e = xy2index[x, y + 1]
+        if e < s:
+            top_intense_event_indices[i] = -2
+        elif e == s:
+            top_intense_event_indices[i] = -1
+        else:
+            top_intense_event_indices[i] = s + np.argmax(intensities[s:e])
+    return top_intense_event_indices
+
+
+BUFFER = DotDict(tof=10, urt=10)
+boxes = pd.DataFrame(
+    list(
+        get_box_centers(
+            (RADIUS.tof, BUFFER.tof, MAX.tof), (RADIUS.urt, BUFFER.urt, MAX.urt)
+        )
+    ),
+    columns=["tof", "urt"],
+)
+boxes["argmax"] = get_argmaxes(
+    D[:, 3],
+    tof_urt,
+    boxes.tof.to_numpy(),
+    boxes.urt.to_numpy(),
+    np.empty(len(boxes), get_min_int_data_type(len(D))),
+)
+nonempty_boxes = boxes[boxes.argmax >= 0].copy()
+nonempty_boxes["top_tof"] = D[nonempty_boxes.argmax, 0]
+nonempty_boxes["top_urt"] = D[nonempty_boxes.argmax, 1]
+nonempty_boxes["top_scan"] = D[nonempty_boxes.argmax, 2]
+nonempty_boxes["top_intensity"] = D[nonempty_boxes.argmax, 3]
+plt.scatter(
+    nonempty_boxes.tof,
+    nonempty_boxes.urt,
+    s=nonempty_boxes.intensity / nonempty_boxes.intensity.max(),
+)
+plt.show()
+
+#######
+
+
+@numba.njit(boundscheck=True)
+def fill_marginals(
+    center_idx: int,
+    stencil_idx: int,
+    marginals,
+    radii: list[int],
+    D: NDArray,
+):
+    intensity = D[stencil_idx, 4]
+    offset = 0
+    for i, radius in enumerate(radii):
+        j = radii[i] + np.intp(D[stencil_idx, i]) - np.intp(D[center_idx, i])
+        marginal[j] += intensity
+        offset += radius * 2 + 1
+
+
+@numba.njit
+def analyze_marginals(center_idx, marginals, radii):
+    # what to do with the marginals? I don't know yet.
+    marginals[:] = 0  # clean-up after each stencil
+
+
+# chunks = divide_indices(len(D))
