@@ -21,7 +21,45 @@ def do_nothing(center_idx, *args):
     return None
 
 
-# TODO: make xy2idx on the flight: save on RAM
+ZERO = np.intp(0)
+
+
+@numba.njit
+def visit_stencil(
+    X,
+    Y,
+    Z,
+    zz,
+    x_tol,
+    y_tol,
+    z_tol,
+    xy2idx,
+    stencil_foo,
+    *stencil_foo_args,
+) -> None:
+    min_x = max(X - x_tol, ZERO)
+    max_x = min(X + x_tol + 1, np.intp(xy2idx.shape[0]))
+    min_y = max(Y - y_tol, ZERO)
+    max_y = min(Y + y_tol + 1, np.intp(xy2idx.shape[1] - 1))
+    min_z = Z - z_tol
+    max_z = Z + z_tol
+    for x in range(min_x, max_x):
+        for y in range(min_y, max_y):
+            s_idx = xy2idx[x, y]
+            e_idx = xy2idx[x, y + 1]
+            # TODO: if x,y the same as previously, simply reuse idx of last smallest z.
+            # but that would be non-trivial to implement.
+            for stencil_idx in range(s_idx, e_idx):
+                # linear search: given low occupation of tof-urt cells,
+                # PROBABLY faster than doing binary search. DEFINITELY SIMPLER.
+                z = zz[stencil_idx]
+                if z > max_z:
+                    break
+                if z >= min_z:
+                    stencil_foo(stencil_idx, *stencil_foo_args)
+
+
+# TODO: make xy2idx on the flight: save on RAM and remove this way one more argument
 @numba.njit(parallel=True, boundscheck=True)
 def moving_window(
     xx: NDArray,
@@ -51,33 +89,20 @@ def moving_window(
             X = np.intp(xx[center_idx])
             Y = np.intp(yy[center_idx])
             Z = np.intp(zz[center_idx])
-
-            min_x = max(X - x_tol, MIN_X)
-            max_x = min(X + x_tol + 1, MAX_X)
-            min_y = max(Y - y_tol, MIN_Y)
-            max_y = min(Y + y_tol + 1, MAX_Y)
-            min_z = Z - z_tol
-            max_z = Z + z_tol
-
-            for x in range(min_x, max_x):
-                for y in range(min_y, max_y):
-                    s_idx = xy2idx[x, y]
-                    e_idx = xy2idx[x, y + 1]
-                    # TODO: if x,y the same as previously, simply reuse idx of last smallest z.
-                    # but that would be non-trivial to implement.
-                    for stencil_idx in range(s_idx, e_idx):
-                        # linear search: given low occupation of tof-urt cells,
-                        # PROBABLY faster than doing binary search. DEFINITELY SIMPLER.
-                        z = zz[stencil_idx]
-                        if z > max_z:
-                            break
-                        if z >= min_z:  # call foo only on nonzero intensities
-                            stencil_foo(
-                                center_idx,
-                                stencil_idx,
-                                stencil_scratch,
-                                *stencil_foo_args,
-                            )
+            visit_stencil(
+                X,
+                Y,
+                Z,
+                zz,
+                x_tol,
+                y_tol,
+                z_tol,
+                xy2idx,
+                stencil_foo,
+                center_idx,
+                stencil_scratch,
+                *stencil_foo_args,
+            )
             center_foo(center_idx, stencil_scratch, *center_foo_args)
 
         if progress is not None:
@@ -86,8 +111,8 @@ def moving_window(
 
 @numba.njit
 def _get_local_counts_maxes_sums(
-    center_idx,
     stencil_idx,
+    center_idx,
     stencil_scratch,
     intensities,
     counts,

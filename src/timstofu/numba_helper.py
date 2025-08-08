@@ -360,8 +360,9 @@ def permute_inplace(
     permutation: NDArray,
     visited: NDArray | None = None,
 ) -> NDArray:
-    """Apply order on orbits (cycles) of the permutation `permutation` in-place on `array`.
+    """RAM-efficient `array = array[permutation]`.
 
+    Apply order on orbits (cycles) of the permutation `permutation` in-place on `array`.
     Likely best to do it for tables already in RAM to assure random access.
 
     Parameters
