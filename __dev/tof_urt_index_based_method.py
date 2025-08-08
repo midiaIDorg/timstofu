@@ -28,7 +28,7 @@ from timstofu.math import merge_intervals
 from timstofu.misc import filtering_str
 from timstofu.misc import get_max_count
 from timstofu.misc import iter_array_splits
-from timstofu.misc import matrix_to_data_dict
+from timstofu.misc import matrix_to_data_dict, approximate_block_sum
 from timstofu.numba_helper import divide_indices
 from timstofu.numba_helper import filter_nb
 from timstofu.numba_helper import get_min_int_data_type
@@ -59,8 +59,13 @@ from timstofu.timstofmisc import deduce_shift_and_spacing
 from timstofu.windowing import (
     assert_local_counts_maxes_sums_are_as_with_direct_calculation,
 )
+from timstofu.top_k import topk_indices_fast
 from timstofu.windowing import get_local_counts_maxes_sums
-from timstofu.windowing import moving_window, visit_stencil
+from timstofu.windowing import (
+    moving_window,
+    visit_stencil,
+    iter_stencils_from_xy_selection,
+)
 
 from mmapped_df import open_dataset_dct
 
@@ -141,15 +146,6 @@ if paranoid:
     )
 
 
-# GETTING LOCAL MAXIMA
-from timstofu.top_k import topk_indices_fast
-
-top1000_intense_events = topk_indices_fast(raw.intensity, 1000)
-# I = raw.intensity.copy()
-# I.sort()
-# np.testing.assert_equal( raw.intensity[top1000_intense_events], I[-1000:][::-1] )
-
-
 def get_box_centers(*radius_buffer_max):
     yield from itertools.product(
         *(range(r + 1, m, 2 * (r + b)) for r, b, m in radius_buffer_max)
@@ -198,21 +194,36 @@ nonempty_boxes["tof_urt_cnt"] = nonempty_boxes["e"] - nonempty_boxes["s"]
 
 nonempty_boxes  # these points have most likely zero neighbors.
 # change the stategy : loook into maximizers of intensity among most intense peaks? and get a box around those?
-top_idx = neighbor_stats.counts.argmax()
-neighbor_stats.counts[top_idx]
+
+top1000_neighbored_events = topk_indices_fast(neighbor_stats.counts, 1000)
+top1000_intense_events = topk_indices_fast(neighbor_stats.sums, 1000)
+# top_idx = neighbor_stats.counts.argmax()
+# I = raw.intensity.copy()
+# I.sort()
+# np.testing.assert_equal( raw.intensity[top1000_intense_events], I[-1000:][::-1] )
+
+
+W = approximate_block_sum(np.diff(tof_urt), 100, 100)
+
+plt.matshow(W, aspect="auto")
+plt.show()
+
+top1000_intense_events[500]
+top_idx = top1000_neighbored_events[0]
+
 top_tof = raw.tof[top_idx]
 top_urt = raw.urt[top_idx]
+tof_rad = 10
+urt_rad = 20
 
-tof_rad = 5
-urt_rad = 10
-starts = tof_urt[
-    max(top_tof - tof_rad, 0) : top_tof + tof_rad + 1,
-    max(top_urt - urt_rad, 0) : top_urt + urt_rad + 1,
-]
-ends = tof_urt[
-    max(top_tof - tof_rad, 0) : top_tof + tof_rad + 1,
-    max(top_urt - urt_rad + 1, 0) : top_urt + urt_rad + 1,
-]
+idxs = np.fromiter(
+    iter_stencils_from_xy_selection(top_tof, top_urt, tof_rad, urt_rad, tof_urt),
+    np.uint32,
+)
+D_pd = pd.DataFrame(D[idxs], columns=["tof", "urt", "scan", "intensity"])
+
+df_to_plotly_scatterplot3D(D_pd)
+
 
 # plt.matshow(ends - starts)
 plt.show()

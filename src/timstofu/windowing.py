@@ -25,6 +25,20 @@ ZERO = np.intp(0)
 
 
 @numba.njit
+def iter_stencils_from_xy_selection(X, Y, x_tol, y_tol, xy2idx) -> None:
+    min_x = max(X - x_tol, ZERO)
+    max_x = min(X + x_tol + 1, np.intp(xy2idx.shape[0]))
+    min_y = max(Y - y_tol, ZERO)
+    max_y = min(Y + y_tol + 1, np.intp(xy2idx.shape[1] - 1))
+    for x in range(min_x, max_x):
+        for y in range(min_y, max_y):
+            s_idx = xy2idx[x, y]
+            e_idx = xy2idx[x, y + 1]
+            for stencil_idx in range(s_idx, e_idx):
+                yield stencil_idx
+
+
+@numba.njit
 def visit_stencil(
     X,
     Y,

@@ -54,3 +54,32 @@ def matrix_to_data_dict(
     for i, col in enumerate(columns):
         dd[col] = matrix[:, i]
     return dd
+
+
+@numba.njit
+def approximate_block_sum(arr: NDArray, k: int, m: int) -> NDArray:
+    rows, cols = arr.shape
+    out = np.zeros((k, m), dtype=arr.dtype)
+
+    # Precompute integer edges
+    row_edges = np.empty(k + 1, dtype=np.int64)
+    col_edges = np.empty(m + 1, dtype=np.int64)
+    for i in range(k + 1):
+        row_edges[i] = (i * rows) // k
+    for j in range(m + 1):
+        col_edges[j] = (j * cols) // m
+
+    # Sum over blocks
+    for bi in range(k):
+        r0 = row_edges[bi]
+        r1 = row_edges[bi + 1]
+        for bj in range(m):
+            c0 = col_edges[bj]
+            c1 = col_edges[bj + 1]
+            s = 0
+            for r in range(r0, r1):
+                for c in range(c0, c1):
+                    s += arr[r, c]
+            out[bi, bj] = s
+
+    return out
